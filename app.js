@@ -1,0 +1,888 @@
+/* ==================================================================
+   CONFIGURATION FIREBASE — À REMPLIR AVANT DE DÉPLOYER
+   1. https://console.firebase.google.com → crée un projet (ou réutilise
+      celui de Mission Famille).
+   2. Authentication → Sign-in method → active "Google".
+   3. Firestore Database → crée la base (mode production) et colle les
+      règles de sécurité fournies dans le message d'accompagnement.
+   4. Paramètres du projet → Tes applications → Ajouter une "Web app",
+      copie la config générée et colle-la ci-dessous à la place de
+      REMPLACE_MOI.
+   5. Authentication → Settings → Authorized domains → ajoute le domaine
+      où cette page sera hébergée (ex: tonpseudo.github.io).
+   ================================================================== */
+// La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
+// L'accès aux données est protégé par les règles de sécurité Firestore, pas par cette clé.
+const firebaseConfig = {
+  apiKey: "AIzaSyB_RGvwCZA10XiHONeSwwvh7UikPUOUurU",
+  authDomain: "mission-famille.firebaseapp.com",
+  projectId: "mission-famille",
+  storageBucket: "mission-famille.firebasestorage.app",
+  messagingSenderId: "1024156538990",
+  appId: "1:1024156538990:web:611026df02fa1325bf2e7f"
+};
+const CONFIG_READY = !Object.values(firebaseConfig).some(v => v.includes('REMPLACE_MOI'));
+const APP_NS = 'defisCollegues';
+
+let auth, db;
+if(CONFIG_READY){
+  firebase.initializeApp(firebaseConfig);
+  auth = firebase.auth();
+  db = firebase.firestore();
+}
+
+/* ---------------- Seed data ---------------- */
+const SUGGESTIONS = {
+  colleagues: [
+    'Râler pour un oui ou un non',
+    'Souffler bruyamment entre deux tâches',
+    "Déplacer discrètement les objets d'un collègue",
+    'Mot interdit',
+    'Mot obligatoire à glisser dans une phrase',
+    'Complimenter chaque collègue croisé',
+    'Ne jamais dire "OK", trouver une autre formule',
+    'Répondre à une question par une autre question',
+    'Dire "excellente remarque" avant de répondre à quelqu\'un',
+    'Utiliser un surnom pour tout le monde',
+    'Applaudir discrètement après chaque appel ou réunion',
+    'Chuchoter une phrase sur trois',
+    'Changer de stylo à chaque nouvelle note',
+    'Proposer un café à quelqu\'un sans qu\'on demande',
+    'Marcher à petits pas pressés en toute circonstance',
+    'Terminer chaque échange par "à votre bon cœur"',
+    'Ranger un objet du bureau d\'un collègue façon feng shui',
+    'Se lever et s\'étirer ostensiblement toutes les heures',
+    'Dire bonjour à la même personne trois fois dans la journée'
+  ]
+};
+
+const DEFAULT_DEFIS = [
+  { id: genId(), name: 'Râler' },
+  { id: genId(), name: 'Souffler' },
+  { id: genId(), name: 'Déplacer les objets' },
+  { id: genId(), name: 'Mot interdit', word: '' },
+];
+const DEFAULT_PEOPLE = ['Karine','Edwina','Maélanie','Pauline','Marie Cha','Jeanne JCD','Alice','Jeanne S'];
+function getDays(){ return ['Lun','Mar','Mer','Jeu','Ven']; }
+const CARD_VARIANTS = ['v0','v1','v2','v3','v4','v5','v6','v7'];
+
+/* ---------------- Small pure helpers ---------------- */
+function genId(){ return Math.random().toString(36).slice(2,10); }
+
+function escapeAttr(s){
+  return (s||'').replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  })[c]);
+}
+function normalize(s){ return (s||'').trim().toLowerCase(); }
+
+function hashCode(str){
+  let h = 0;
+  for(let i=0;i<str.length;i++){ h = (h<<5) - h + str.charCodeAt(i); h |= 0; }
+  return h;
+}
+
+function currentWeekLabel(){
+  const d = new Date();
+  const onejan = new Date(d.getFullYear(),0,1);
+  const week = Math.ceil((((d - onejan) / 86400000) + onejan.getDay()+1)/7);
+  return `Semaine ${week} · ${d.getFullYear()}`;
+}
+
+/* ---------------- App state (in-memory mirror of Firestore) ---------------- */
+let state = { defis: [], people: [], week: null, historyCount: 0 };
+let myName = null;
+let myUid = null;
+let currentPage = 'semaine';
+let unsubList = [];
+let defisReady = false, peopleReady = false, weekInitInProgress = false;
+const notifiedIds = new Set();
+let prevPendingKeys = new Set();
+
+/* ---------------- Week / day domain logic ---------------- */
+function blankDay(){ return { status: 'none', votes: {} }; }
+function normalizeDay(raw){
+  if(raw && typeof raw === 'object' && 'status' in raw) return { status: raw.status, votes: raw.votes || {}, tieBreak: !!raw.tieBreak };
+  return { status: raw ? 'validated' : 'none', votes: {} };
+}
+
+function newWeek(assignments){
+  const checks = {};
+  state.people.forEach(p => checks[p] = new Array(getDays().length).fill(null).map(blankDay));
+  return { label: currentWeekLabel(), assignments: assignments || {}, checks };
+}
+
+// Normalise la forme d'un objet "week" pour une liste de personnes donnée.
+// Prend people en paramètre (plutôt que state.people) car cette fonction est
+// aussi appelée sur des documents fraîchement lus dans une transaction.
+function ensureWeekShape(week, people){
+  if(!week) return;
+  const dayCount = getDays().length;
+  people.forEach(p => {
+    let arr = (week.checks[p] || []).map(normalizeDay);
+    if(arr.length > dayCount) arr = arr.slice(0, dayCount);
+    else if(arr.length < dayCount) arr = arr.concat(new Array(dayCount - arr.length).fill(null).map(blankDay));
+    week.checks[p] = arr;
+  });
+}
+
+function assignRandomly(){
+  if(state.defis.length === 0) return {};
+  const pool = [...state.defis];
+  const assignments = {};
+  state.people.forEach(p => {
+    const defi = pool[Math.floor(Math.random()*pool.length)];
+    assignments[p] = defi.id;
+  });
+  return assignments;
+}
+
+function defiById(id){ return state.defis.find(d => d.id === id); }
+
+function getDayState(person, dayIdx){
+  const arr = state.week && state.week.checks[person];
+  if(!arr || !arr[dayIdx]) return blankDay();
+  return arr[dayIdx];
+}
+
+function eligibleVoters(person){ return state.people.filter(p => p !== person).length; }
+function majorityThreshold(person){ return Math.floor(eligibleVoters(person)/2) + 1; }
+
+// Règle de départage : en cas d'égalité totale (tous les votants ont voté,
+// autant de "oui" que de "non"), un tirage au sort équitable et déterministe
+// tranche — basé sur un hash du défi, de la personne et de la semaine, donc
+// tout le monde obtient exactement le même résultat sans avoir besoin d'un
+// serveur arbitre.
+function tieBreakResult(person, dayIdx, weekLabel){
+  const seed = `${person}-${dayIdx}-${weekLabel}`;
+  return Math.abs(hashCode(seed)) % 2 === 0 ? 'validated' : 'rejected';
+}
+
+// weekLabel est passé explicitement (plutôt que lu sur state.week) car cette
+// fonction s'exécute aussi à l'intérieur de transactions Firestore, sur un
+// document tout juste relu depuis le serveur — pas sur l'état local qui peut
+// être légèrement périmé.
+function resolveDay(day, person, dayIdx, weekLabel){
+  const votes = Object.values(day.votes);
+  const yes = votes.filter(v => v === 'yes').length;
+  const no = votes.filter(v => v === 'no').length;
+  const total = eligibleVoters(person);
+  const threshold = majorityThreshold(person);
+  if(threshold === 0){ day.status = 'validated'; return; }
+  if(yes >= threshold){ day.status = 'validated'; return; }
+  if(no >= threshold){ day.status = 'rejected'; return; }
+  if(yes + no >= total && yes === no){
+    day.status = tieBreakResult(person, dayIdx, weekLabel);
+    day.tieBreak = true;
+  }
+}
+
+function successCount(person){
+  const c = (state.week && state.week.checks[person]) || [];
+  return c.filter(d => d.status === 'validated').length;
+}
+
+function pendingItemsNeedingMyVote(){
+  if(!myName || !state.week) return [];
+  const items = [];
+  state.people.forEach(person => {
+    if(person === myName) return;
+    (state.week.checks[person] || []).forEach((day, di) => {
+      if(day.status === 'pending' && !(myName in day.votes)) items.push({ person, dayIdx: di });
+    });
+  });
+  return items;
+}
+
+function allPendingItems(){
+  const items = [];
+  if(!state.week) return items;
+  state.people.forEach(person => {
+    (state.week.checks[person] || []).forEach((day, di) => {
+      if(day.status === 'pending') items.push({ person, dayIdx: di, day });
+    });
+  });
+  return items;
+}
+
+function getMandatoryWord(){
+  const d = state.defis.find(x => x.isMandatoryWord);
+  return d && d.word ? d.word : '';
+}
+
+/* ---------------- Firestore refs & transactional mutators ----------------
+   Toutes les mutations passent par une transaction Firestore (lecture du
+   document le plus frais + écriture atomique) plutôt que par un simple
+   `.set(state.xxx)` à partir de l'état local. Ça évite qu'un vote ou une
+   édition d'un collègue écrase silencieusement celui d'un autre si les deux
+   arrivent à quelques centaines de ms d'écart. */
+function docRef(name){ return db.collection(APP_NS).doc(name); }
+function identityRef(uid){ return db.collection(APP_NS + '_identities').doc(uid); }
+// Un document par semaine archivée plutôt qu'un unique tableau qui grossirait
+// indéfiniment (et finirait par dépasser la limite de 1 Mo par document Firestore).
+function historyCollection(){ return db.collection(APP_NS + '_history'); }
+
+async function updateWeek(mutator){
+  const ref = docRef('week');
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const week = snap.exists ? snap.data() : newWeek(assignRandomly());
+    ensureWeekShape(week, state.people);
+    const result = mutator(week);
+    tx.set(ref, week);
+    return result;
+  });
+}
+
+async function updateDefis(mutator){
+  const ref = docRef('defis');
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    const defis = (snap.exists && snap.data().list) || [];
+    const result = mutator(defis);
+    tx.set(ref, { list: defis });
+    return result;
+  });
+}
+
+async function addPersonCore(name){
+  let added = true;
+  await db.runTransaction(async tx => {
+    const peopleRef = docRef('people');
+    const weekRef = docRef('week');
+    const peopleSnap = await tx.get(peopleRef);
+    const weekSnap = await tx.get(weekRef);
+    const people = (peopleSnap.exists && peopleSnap.data().list) || [];
+    if(people.includes(name)){ added = false; return; }
+    people.push(name);
+    const week = weekSnap.exists ? weekSnap.data() : newWeek({});
+    ensureWeekShape(week, people);
+    if(state.defis.length) week.assignments[name] = state.defis[Math.floor(Math.random()*state.defis.length)].id;
+    tx.set(peopleRef, { list: people });
+    tx.set(weekRef, week);
+  });
+  return added;
+}
+
+async function removePerson(person){
+  await db.runTransaction(async tx => {
+    const peopleRef = docRef('people');
+    const weekRef = docRef('week');
+    const peopleSnap = await tx.get(peopleRef);
+    const weekSnap = await tx.get(weekRef);
+    const people = ((peopleSnap.exists && peopleSnap.data().list) || []).filter(p => p !== person);
+    const week = weekSnap.exists ? weekSnap.data() : newWeek({});
+    delete week.assignments[person];
+    delete week.checks[person];
+    tx.set(peopleRef, { list: people });
+    tx.set(weekRef, week);
+  });
+}
+
+/* ---------------- Toasts & notifications ---------------- */
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=> t.classList.remove('show'), 1800);
+}
+
+function showErrorToast(err){
+  console.error(err);
+  showToast('Erreur réseau, réessaie ⚠️');
+}
+
+function tryNotify(title, body){
+  if(!('Notification' in window)) return;
+  if(Notification.permission === 'granted'){
+    try{ new Notification(title, { body }); }catch(e){}
+  } else if(Notification.permission !== 'denied'){
+    Notification.requestPermission().catch(()=>{});
+  }
+}
+
+function notifyNewPending(){
+  const items = pendingItemsNeedingMyVote();
+  const keys = new Set(items.map(it => it.person + '-' + it.dayIdx));
+  keys.forEach(k => {
+    if(!prevPendingKeys.has(k) && !notifiedIds.has(k)){
+      notifiedIds.add(k);
+      const [person] = k.split('-');
+      tryNotify('Défi à valider 🔔', `${person} a déclaré son défi fait — vote demandé.`);
+    }
+  });
+  prevPendingKeys = keys;
+}
+
+/* ---------------- Auth & data bootstrap ---------------- */
+function detachAll(){ unsubList.forEach(u => u()); unsubList = []; defisReady = false; peopleReady = false; }
+
+function showSignInScreen(){
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="hero">
+      <div class="pin tl"></div>
+      <svg class="cloud" viewBox="0 0 100 60"><ellipse cx="30" cy="38" rx="26" ry="20" fill="#fff"/><ellipse cx="60" cy="30" rx="30" ry="24" fill="#fff"/><ellipse cx="82" cy="42" rx="18" ry="15" fill="#fff"/><circle cx="52" cy="28" r="2.4" fill="#333"/><circle cx="66" cy="28" r="2.4" fill="#333"/><ellipse cx="59" cy="35" rx="6" ry="3" fill="#ffb3c6" opacity="0.7"/></svg>
+      <h1>Listing</h1>
+      <div class="sub">Défis <span class="note-emoji">🎵</span></div>
+      <div class="mode-toggle"><span class="mode-btn active colleagues" style="cursor:default;">👥 Équipe de travail</span></div>
+    </div>
+    <div style="text-align:center; margin-top:34px;">
+      ${CONFIG_READY ? `
+        <p style="font-family:'Caveat'; font-size:1.35rem;">Connecte-toi avec ton compte Google pour accéder au tableau de l'équipe.</p>
+        <button class="btn" id="googleSignInBtn">🔐 Se connecter avec Google</button>
+      ` : `
+        <p style="font-family:'Quicksand'; font-size:0.9rem; max-width:420px; margin:0 auto; color:var(--ink-soft);">
+          ⚠️ La configuration Firebase n'a pas encore été renseignée dans le fichier
+          (constante <code>firebaseConfig</code> en haut de app.js). Complète-la avec les
+          identifiants de ton projet Firebase, puis recharge la page.
+        </p>
+      `}
+    </div>
+  `;
+  if(CONFIG_READY){
+    document.getElementById('googleSignInBtn').addEventListener('click', () => {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      auth.signInWithPopup(provider).catch(() => showToast('Connexion annulée ou refusée'));
+    });
+  }
+}
+
+async function initData(){
+  await new Promise(resolve => {
+    let done = 0;
+    const check = () => { done++; if(done === 2) resolve(); };
+    unsubList.push(docRef('defis').onSnapshot(async snap => {
+      if(snap.exists && snap.data().list){ state.defis = snap.data().list; }
+      else { state.defis = DEFAULT_DEFIS; await docRef('defis').set({ list: state.defis }); }
+      if(!defisReady){ defisReady = true; check(); }
+      renderApp();
+    }));
+    unsubList.push(docRef('people').onSnapshot(async snap => {
+      if(snap.exists && snap.data().list){ state.people = snap.data().list; }
+      else { state.people = DEFAULT_PEOPLE; await docRef('people').set({ list: state.people }); }
+      if(!peopleReady){ peopleReady = true; check(); }
+      renderApp();
+    }));
+  });
+
+  unsubList.push(docRef('week').onSnapshot(async snap => {
+    if(snap.exists && snap.data().label === currentWeekLabel()){
+      state.week = snap.data();
+      ensureWeekShape(state.week, state.people);
+      renderApp();
+      notifyNewPending();
+    } else if(!weekInitInProgress){
+      weekInitInProgress = true;
+      try{
+        await db.runTransaction(async tx => {
+          const ref = docRef('week');
+          const fresh = await tx.get(ref);
+          if(!fresh.exists || fresh.data().label !== currentWeekLabel()){
+            tx.set(ref, newWeek(assignRandomly()));
+          }
+        });
+      } finally { weekInitInProgress = false; }
+    }
+  }));
+  unsubList.push(historyCollection().onSnapshot(snap => {
+    state.historyCount = snap.size;
+    renderApp();
+  }));
+}
+
+function startAuth(){
+  if(!CONFIG_READY){ showSignInScreen(); return; }
+  auth.onAuthStateChanged(async user => {
+    detachAll();
+    if(!user){
+      myUid = null; myName = null;
+      showSignInScreen();
+      return;
+    }
+    myUid = user.uid;
+    const idSnap = await identityRef(myUid).get();
+    myName = idSnap.exists ? idSnap.data().name : null;
+    await initData();
+    if(!myName) showIdentityModal(false);
+  });
+}
+
+/* ---------------- Rendering ----------------
+   render() reconstruit tout app.innerHTML à chaque snapshot Firestore, ce qui
+   détruirait un champ en cours de frappe si une mise à jour arrive pendant
+   que quelqu'un tape (ex: un collègue vote pendant que tu renommes un défi).
+   renderApp() enrobe render() pour capturer le champ actif + sa sélection
+   avant, et les restaurer après, afin qu'une frappe en cours ne soit jamais
+   perdue à cause d'un événement Firestore externe. */
+function focusSelector(el){
+  if(el.id) return `#${CSS.escape(el.id)}`;
+  if(el.dataset && el.dataset.id){
+    const cls = (el.className || '').split(' ').filter(Boolean)[0];
+    return `${el.tagName.toLowerCase()}${cls ? '.'+CSS.escape(cls) : ''}[data-id="${CSS.escape(el.dataset.id)}"]`;
+  }
+  return null;
+}
+
+function renderApp(){
+  const active = document.activeElement;
+  let restore = null;
+  const appEl = document.getElementById('app');
+  if(active && appEl && appEl.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')){
+    const selector = focusSelector(active);
+    if(selector){
+      restore = { selector, value: active.value, selStart: active.selectionStart, selEnd: active.selectionEnd };
+    }
+  }
+  render();
+  if(restore){
+    const el = document.querySelector(restore.selector);
+    if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')){
+      el.value = restore.value;
+      try{ el.setSelectionRange(restore.selStart, restore.selEnd); }catch(e){}
+      el.focus();
+    }
+  }
+}
+
+function render(){
+  if(!state.week){ return; }
+  const app = document.getElementById('app');
+  const pendingCount = pendingItemsNeedingMyVote().length;
+  app.innerHTML = `
+    <div class="hero">
+      <div class="pin tl"></div>
+      <svg class="cloud" viewBox="0 0 100 60"><ellipse cx="30" cy="38" rx="26" ry="20" fill="#fff"/><ellipse cx="60" cy="30" rx="30" ry="24" fill="#fff"/><ellipse cx="82" cy="42" rx="18" ry="15" fill="#fff"/><circle cx="52" cy="28" r="2.4" fill="#333"/><circle cx="66" cy="28" r="2.4" fill="#333"/><ellipse cx="59" cy="35" rx="6" ry="3" fill="#ffb3c6" opacity="0.7"/></svg>
+      <h1>Listing</h1>
+      <div class="sub">Défis <span class="note-emoji">🎵</span></div>
+      <div class="mode-toggle"><span class="mode-btn active colleagues" style="cursor:default;">👥 Équipe de travail</span></div>
+    </div>
+
+    <div class="who-line"><span class="who-badge">🙋 Toi : <b>${myName ? escapeAttr(myName) : '?'}</b> <button id="changeIdBtn">changer</button> · <button id="signOutBtn">se déconnecter</button></span></div>
+
+    <div class="tab-bar">
+      <button class="tab-btn ${currentPage==='defis'?'active':''}" data-page="defis">📌 Défis</button>
+      <button class="tab-btn ${currentPage==='valider'?'active':''}" data-page="valider">🔔 À valider ${pendingCount ? `<span class="tab-badge">${pendingCount}</span>` : ''}</button>
+      <button class="tab-btn ${currentPage==='semaine'?'active':''}" data-page="semaine">🗓️ Semaine</button>
+    </div>
+
+    <section class="page ${currentPage==='defis'?'active':''}" id="page-defis">
+      <p class="panel-title">📌 Types de défis</p>
+      <div class="pad" id="pad"></div>
+      <div class="sticky-word">
+        <div class="washi"></div>
+        <label>Mot obligatoire actuel</label>
+        <textarea id="mandatoryWord" placeholder="écrire le mot ici…">${escapeAttr(getMandatoryWord())}</textarea>
+      </div>
+      <div class="suggest-panel">
+        <div class="sp-head">
+          <p class="panel-title" style="margin:0;">💡 Idées de défis bureau</p>
+          <button class="btn ghost small" id="addAllBtn">Tout ajouter</button>
+        </div>
+        <div class="suggest-list" id="suggestList"></div>
+      </div>
+    </section>
+
+    <section class="page ${currentPage==='valider'?'active':''}" id="page-valider">
+      <div class="pending-panel">
+        <h3>🔔 Défis à valider ${pendingCount ? `<span style="font-family:'Quicksand'; font-size:0.75rem; background:var(--pink); color:white; border-radius:12px; padding:2px 8px;">${pendingCount}</span>` : ''}</h3>
+        <div id="pendingList"></div>
+        <p style="font-family:'Quicksand'; font-size:0.72rem; color:var(--ink-soft); margin-top:10px;">
+          Règle de départage : si tout le monde a voté et que c'est parfaitement à égalité,
+          un tirage au sort équitable 🎲 tranche automatiquement (même résultat pour tout le monde).
+        </p>
+      </div>
+    </section>
+
+    <section class="page ${currentPage==='semaine'?'active':''}" id="page-semaine">
+      <div class="weekly-head">
+        <div>
+          <h2>Weekly Défis</h2>
+          <div class="week-label">${state.week.label}</div>
+        </div>
+        <div class="actions">
+          <button class="btn" id="shuffleBtn">🎲 Répartir les défis</button>
+          <button class="btn blue" id="newWeekBtn">📅 Nouvelle semaine</button>
+        </div>
+      </div>
+      <div class="people-grid" id="peopleGrid"></div>
+      <div class="add-person">
+        <input id="newPersonInput" placeholder="Ajouter une personne…" />
+        <button class="btn small" id="addPersonBtn">Ajouter</button>
+      </div>
+    </section>
+
+    <div class="footer-note">${state.historyCount} semaine${state.historyCount>1?'s':''} archivée${state.historyCount>1?'s':''} · fait pour l'équipe 👥</div>
+  `;
+
+  renderPad();
+  renderPeople();
+  renderSuggestions();
+  renderPending();
+  wireGlobalEvents();
+  document.getElementById('changeIdBtn').addEventListener('click', () => showIdentityModal(true));
+  document.getElementById('signOutBtn').addEventListener('click', () => auth.signOut());
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => { currentPage = btn.dataset.page; renderApp(); });
+  });
+  if(!myName) showIdentityModal(false);
+}
+
+function renderSuggestions(){
+  const list = document.getElementById('suggestList');
+  const pool = SUGGESTIONS.colleagues;
+  const existingNames = state.defis.map(d => normalize(d.name));
+  list.innerHTML = '';
+  pool.forEach(text => {
+    const already = existingNames.includes(normalize(text));
+    const item = document.createElement('div');
+    item.className = 'suggest-item' + (already ? ' added' : '');
+    item.innerHTML = `<span>${escapeAttr(text)}</span><button ${already?'disabled':''} data-text="${escapeAttr(text)}">${already ? '✓' : '＋'}</button>`;
+    list.appendChild(item);
+  });
+  list.querySelectorAll('button:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      try{
+        const added = await addDefiFromText(e.target.dataset.text);
+        if(added) showToast('Défi ajouté depuis les idées 💡');
+      }catch(err){ showErrorToast(err); }
+    });
+  });
+  document.getElementById('addAllBtn').addEventListener('click', async () => {
+    try{
+      await updateDefis(defis => {
+        SUGGESTIONS.colleagues.forEach(text => {
+          if(!defis.some(d => normalize(d.name) === normalize(text))){
+            const needsWord = /interdit|obligatoire/i.test(text);
+            defis.push({ id: genId(), name: text, ...(needsWord ? { word:'' } : {}) });
+          }
+        });
+      });
+      showToast('Toutes les idées ont été ajoutées ✨');
+    }catch(err){ showErrorToast(err); }
+  });
+}
+
+async function addDefiFromText(text){
+  return updateDefis(defis => {
+    if(defis.some(d => normalize(d.name) === normalize(text))) return false;
+    const needsWord = /interdit|obligatoire/i.test(text);
+    defis.push({ id: genId(), name: text, ...(needsWord ? { word:'' } : {}) });
+    return true;
+  });
+}
+
+function renderPad(){
+  const pad = document.getElementById('pad');
+  pad.innerHTML = '';
+  state.defis.forEach(d => {
+    const row = document.createElement('div');
+    row.className = 'defi-row';
+    const needsWord = /interdit|obligatoire/i.test(d.name);
+    row.innerHTML = `
+      <input class="name" data-id="${d.id}" value="${escapeAttr(d.name)}" />
+      ${needsWord ? `<input class="word" data-id="${d.id}" placeholder="mot…" value="${escapeAttr(d.word||'')}" />` : ''}
+      <button class="del" data-id="${d.id}" title="Supprimer">✕</button>
+    `;
+    pad.appendChild(row);
+  });
+  const addRow = document.createElement('div');
+  addRow.className = 'add-defi';
+  addRow.innerHTML = `<input id="newDefiInput" placeholder="Nouveau défi…" /><button class="btn small" id="addDefiBtn">＋</button>`;
+  pad.appendChild(addRow);
+
+  pad.querySelectorAll('.name').forEach(inp => {
+    inp.addEventListener('change', async e => {
+      const val = e.target.value.trim();
+      if(!val) return;
+      try{
+        await updateDefis(defis => {
+          const d = defis.find(x => x.id === e.target.dataset.id);
+          if(d) d.name = val;
+        });
+      }catch(err){ showErrorToast(err); }
+    });
+  });
+  pad.querySelectorAll('.word').forEach(inp => {
+    inp.addEventListener('change', async e => {
+      try{
+        await updateDefis(defis => {
+          const d = defis.find(x => x.id === e.target.dataset.id);
+          if(d) d.word = e.target.value;
+        });
+      }catch(err){ showErrorToast(err); }
+    });
+  });
+  pad.querySelectorAll('.del').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      try{
+        await updateDefis(defis => {
+          const i = defis.findIndex(x => x.id === e.target.dataset.id);
+          if(i >= 0) defis.splice(i, 1);
+        });
+      }catch(err){ showErrorToast(err); }
+    });
+  });
+  document.getElementById('addDefiBtn').addEventListener('click', addDefi);
+  document.getElementById('newDefiInput').addEventListener('keydown', e => { if(e.key==='Enter') addDefi(); });
+}
+
+async function addDefi(){
+  const inp = document.getElementById('newDefiInput');
+  const val = inp.value.trim();
+  if(!val) return;
+  try{
+    await updateDefis(defis => {
+      const needsWord = /interdit|obligatoire/i.test(val);
+      defis.push({ id: genId(), name: val, ...(needsWord ? { word:'' } : {}) });
+    });
+    showToast('Défi ajouté ✏️');
+  }catch(err){ showErrorToast(err); }
+}
+
+function renderPeople(){
+  const grid = document.getElementById('peopleGrid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  if(state.people.length === 0){
+    grid.innerHTML = `<div class="empty-note">Personne dans l'équipe pour l'instant — ajoute quelqu'un ci-dessous.</div>`;
+  }
+  const days = getDays();
+  state.people.forEach((person, idx) => {
+    const variant = CARD_VARIANTS[idx % CARD_VARIANTS.length];
+    const defiId = state.week.assignments[person];
+    const defi = defiId ? defiById(defiId) : null;
+    const card = document.createElement('div');
+    card.className = `p-card ${variant}`;
+    const wordBit = defi && defi.word ? ` · « ${escapeAttr(defi.word)} »` : '';
+    card.innerHTML = `
+      <button class="remove-p" data-person="${escapeAttr(person)}" title="Retirer">✕</button>
+      <div class="p-name">${escapeAttr(person)}</div>
+      <div class="word-tag">${defi ? escapeAttr(defi.name) + wordBit : 'aucun défi assigné'}</div>
+      <div class="checks">
+        ${days.map((day, di) => {
+          const dayState = getDayState(person, di);
+          const isPending = dayState.status === 'pending';
+          const votes = Object.values(dayState.votes);
+          const yes = votes.filter(v=>v==='yes').length;
+          const no = votes.filter(v=>v==='no').length;
+          let icon = '🤍';
+          if(dayState.status === 'validated') icon = dayState.tieBreak ? '🎲💗' : '💗';
+          else if(dayState.status === 'rejected') icon = dayState.tieBreak ? '🎲💔' : '💔';
+          else if(isPending) icon = '⏳';
+          const canVoteHere = isPending && myName && myName !== person && !(myName in dayState.votes);
+          return `
+          <label class="${isPending ? 'is-pending' : ''}">
+            <span class="heart" data-person="${escapeAttr(person)}" data-day="${di}">${icon}</span>
+            ${day}
+            ${isPending ? `<span class="day-mini-votes">${yes}👍/${no}👎</span>` : ''}
+            ${canVoteHere ? `<button class="mini-vote-btn yes" data-person="${escapeAttr(person)}" data-day="${di}" data-v="yes">👍</button><button class="mini-vote-btn no" data-person="${escapeAttr(person)}" data-day="${di}" data-v="no">👎</button>` : ''}
+          </label>
+        `;}).join('')}
+      </div>
+      <div class="stat">${successCount(person)}/${days.length} réussi${successCount(person)>1?'s':''}</div>
+    `;
+    grid.appendChild(card);
+  });
+
+  grid.querySelectorAll('.heart').forEach(h => {
+    h.addEventListener('click', async e => {
+      await onHeartClick(e.target.dataset.person, parseInt(e.target.dataset.day, 10));
+    });
+  });
+  grid.querySelectorAll('.mini-vote-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      await castVote(e.target.dataset.person, parseInt(e.target.dataset.day,10), e.target.dataset.v);
+    });
+  });
+  grid.querySelectorAll('.remove-p').forEach(b => {
+    b.addEventListener('click', async e => {
+      try{ await removePerson(e.target.dataset.person); }
+      catch(err){ showErrorToast(err); }
+    });
+  });
+}
+
+async function onHeartClick(person, dayIdx){
+  if(!myName){ showIdentityModal(false); return; }
+  const currentStatus = getDayState(person, dayIdx).status;
+  if(currentStatus === 'none' && myName !== person){
+    showToast(`Seul${person.endsWith('e')?'e':''} ${person} peut déclarer ce défi fait.`);
+    return;
+  }
+  if(currentStatus === 'pending'){
+    if(myName === person) showToast('En attente du vote des collègues…');
+    else showToast('Utilise 👍 / 👎 pour voter.');
+    return;
+  }
+  if(currentStatus !== 'none' && myName !== person){
+    showToast('Ce défi est déjà tranché par le vote.');
+    return;
+  }
+  try{
+    const newStatus = await updateWeek(week => {
+      const day = week.checks[person][dayIdx];
+      if(day.status === 'none'){
+        day.status = eligibleVoters(person) === 0 ? 'validated' : 'pending';
+        day.votes = {};
+        delete day.tieBreak;
+      } else if(day.status !== 'none' && person === myName){
+        day.status = 'none';
+        day.votes = {};
+        delete day.tieBreak;
+      }
+      return day.status;
+    });
+    if(newStatus === 'validated') showToast('Défi validé 💗');
+    else if(newStatus === 'pending') showToast('En attente de validation par les collègues ⏳');
+    else showToast('Défi réinitialisé ↺');
+  }catch(err){ showErrorToast(err); }
+}
+
+async function castVote(person, dayIdx, vote){
+  if(!myName){ showIdentityModal(false); return; }
+  if(person === myName){ showToast('Tu ne peux pas voter sur ton propre défi.'); return; }
+  try{
+    const outcome = await updateWeek(week => {
+      const day = week.checks[person][dayIdx];
+      if(day.status !== 'pending') return 'closed';
+      day.votes[myName] = vote;
+      resolveDay(day, person, dayIdx, week.label);
+      return day.tieBreak ? 'tiebreak' : 'recorded';
+    });
+    if(outcome === 'closed'){ showToast('Ce défi est déjà tranché.'); return; }
+    showToast(outcome === 'tiebreak' ? 'Égalité — tirage au sort 🎲' : 'Vote enregistré 🗳️');
+  }catch(err){ showErrorToast(err); }
+}
+
+function renderPending(){
+  const el = document.getElementById('pendingList');
+  if(!el) return;
+  const items = allPendingItems().filter(it => it.person !== myName);
+  if(items.length === 0){
+    el.innerHTML = `<div class="pending-empty">Rien à valider pour l'instant ✨</div>`;
+    return;
+  }
+  const days = getDays();
+  el.innerHTML = items.map(it => {
+    const defi = defiById(state.week.assignments[it.person]);
+    const votes = Object.values(it.day.votes);
+    const yes = votes.filter(v=>v==='yes').length;
+    const no = votes.filter(v=>v==='no').length;
+    const threshold = majorityThreshold(it.person);
+    const already = myName && (myName in it.day.votes);
+    return `
+      <div class="pending-row">
+        <div class="pr-text"><b>${escapeAttr(it.person)}</b> · ${days[it.dayIdx]} — ${escapeAttr(defi ? defi.name : 'défi')}
+          <span class="pr-votes">${yes}👍 / ${no}👎 (majorité: ${threshold})</span>
+        </div>
+        <div class="pr-actions">
+          ${already
+            ? `<span class="pr-votes">déjà voté ✓</span>`
+            : `<button class="vote-btn yes" data-person="${escapeAttr(it.person)}" data-day="${it.dayIdx}" data-v="yes">👍 Valider</button>
+               <button class="vote-btn no" data-person="${escapeAttr(it.person)}" data-day="${it.dayIdx}" data-v="no">👎 Refuser</button>`}
+        </div>
+      </div>`;
+  }).join('');
+
+  el.querySelectorAll('.vote-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      await castVote(e.target.dataset.person, parseInt(e.target.dataset.day,10), e.target.dataset.v);
+    });
+  });
+}
+
+function wireGlobalEvents(){
+  document.getElementById('shuffleBtn').addEventListener('click', async () => {
+    try{
+      await updateWeek(week => { week.assignments = assignRandomly(); });
+      showToast('Défis répartis 🎲');
+    }catch(err){ showErrorToast(err); }
+  });
+  document.getElementById('newWeekBtn').addEventListener('click', async () => {
+    try{
+      await db.runTransaction(async tx => {
+        const weekRef = docRef('week');
+        const weekSnap = await tx.get(weekRef);
+        const finishedWeek = weekSnap.exists ? weekSnap.data() : null;
+        const nextWeek = newWeek(assignRandomly());
+        if(finishedWeek) tx.set(historyCollection().doc(), { ...finishedWeek, archivedAt: Date.now() });
+        tx.set(weekRef, nextWeek);
+      });
+      showToast('Nouvelle semaine lancée 📅');
+    }catch(err){ showErrorToast(err); }
+  });
+  document.getElementById('addPersonBtn').addEventListener('click', addPerson);
+  document.getElementById('newPersonInput').addEventListener('keydown', e => { if(e.key==='Enter') addPerson(); });
+  document.getElementById('mandatoryWord').addEventListener('change', async e => {
+    const value = e.target.value;
+    try{
+      await updateDefis(defis => {
+        let d = defis.find(x => x.isMandatoryWord);
+        if(!d){ d = { id: genId(), name: 'Mot obligatoire', word: '', isMandatoryWord: true }; defis.push(d); }
+        d.word = value;
+      });
+    }catch(err){ showErrorToast(err); }
+  });
+}
+
+async function addPerson(){
+  const inp = document.getElementById('newPersonInput');
+  const val = inp.value.trim();
+  if(!val) return;
+  try{
+    const added = await addPersonCore(val);
+    showToast(added ? `${val} ajoutée à l'équipe 💌` : 'Cette personne existe déjà.');
+  }catch(err){ showErrorToast(err); }
+}
+
+/* ---------------- Identity modal (compte Google → prénom de l'équipe) ---------------- */
+function showIdentityModal(dismissable){
+  const existing = document.getElementById('idModalOverlay');
+  if(existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'idModalOverlay';
+  overlay.innerHTML = `
+    <div class="modal-box">
+      <h3>Qui es-tu ?</h3>
+      <p>Ton compte Google (${auth.currentUser ? escapeAttr(auth.currentUser.email) : ''}) sera lié à ce prénom, sur tous tes appareils.</p>
+      <div class="modal-names">
+        ${state.people.map(p => `<button data-person="${escapeAttr(p)}">${escapeAttr(p)}</button>`).join('')}
+      </div>
+      <div class="add-person">
+        <input id="idNewName" placeholder="Ton prénom s'il n'est pas listé…" />
+        <button class="btn small" id="idAddBtn">OK</button>
+      </div>
+      ${dismissable ? `<div style="margin-top:12px;"><button class="btn ghost small" id="idCancelBtn">Annuler</button></div>` : ''}
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('.modal-names button').forEach(btn => {
+    btn.addEventListener('click', () => setIdentity(btn.dataset.person));
+  });
+  document.getElementById('idAddBtn').addEventListener('click', async () => {
+    const val = document.getElementById('idNewName').value.trim();
+    if(!val) return;
+    if(!state.people.includes(val)){
+      try{ await addPersonCore(val); }
+      catch(err){ showErrorToast(err); return; }
+    }
+    setIdentity(val);
+  });
+  if(dismissable) document.getElementById('idCancelBtn').addEventListener('click', () => overlay.remove());
+}
+
+async function setIdentity(name){
+  try{
+    await identityRef(myUid).set({ name, email: auth.currentUser ? auth.currentUser.email : null });
+  }catch(err){ showErrorToast(err); return; }
+  myName = name;
+  const overlay = document.getElementById('idModalOverlay');
+  if(overlay) overlay.remove();
+  renderApp();
+  showToast(`Bienvenue ${name} 👋`);
+}
+
+startAuth();
