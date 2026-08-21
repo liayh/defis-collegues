@@ -14,12 +14,12 @@
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
 // L'accès aux données est protégé par les règles de sécurité Firestore, pas par cette clé.
 const firebaseConfig = {
-  apiKey: "AIzaSyB_RGvwCZA10XiHONeSwwvh7UikPUOUurU",
-  authDomain: "mission-famille.firebaseapp.com",
-  projectId: "mission-famille",
-  storageBucket: "mission-famille.firebasestorage.app",
-  messagingSenderId: "1024156538990",
-  appId: "1:1024156538990:web:611026df02fa1325bf2e7f"
+  apiKey: "AIzaSyB6V8THug1qJwzDDyiw7kCbALzHw57BsZc",
+  authDomain: "defiscollegues.firebaseapp.com",
+  projectId: "defiscollegues",
+  storageBucket: "defiscollegues.firebasestorage.app",
+  messagingSenderId: "790310786767",
+  appId: "1:790310786767:web:832a3a3bca8fccaba349ba"
 };
 const CONFIG_READY = !Object.values(firebaseConfig).some(v => v.includes('REMPLACE_MOI'));
 const APP_NS = 'defisCollegues';
