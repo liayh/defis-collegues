@@ -16,7 +16,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, runTransaction
+  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
@@ -760,6 +760,20 @@ function render(){
         <button class="btn blue small" id="settingsSignOutBtn">Se déconnecter</button>
         <button class="btn ghost small" id="settingsDeleteBtn" style="color:#c0392b; border-color:#e6b0aa;">Supprimer mon compte</button>
       </div>
+
+      <div class="suggest-panel" style="border-color:#e6b0aa;">
+        <p class="panel-title" style="margin:0 0 10px; color:#c0392b;">🛠️ Administration — zone sensible</p>
+
+        <p style="font-family:'Quicksand'; font-size:0.82rem; font-weight:600; margin:0 0 8px;">Personnes de l'équipe</p>
+        <div id="adminPeopleList" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;"></div>
+
+        <p style="font-family:'Quicksand'; font-size:0.82rem; font-weight:600; margin:0 0 8px;">Semaine en cours</p>
+        <button class="btn ghost small" id="adminResetWeekBtn" style="margin-bottom:16px;">↺ Réinitialiser les votes/statuts</button>
+
+        <p style="font-family:'Quicksand'; font-size:0.82rem; font-weight:600; margin:0 0 8px; color:#c0392b;">Supprimer l'équipe entière</p>
+        <p style="font-family:'Quicksand'; font-size:0.78rem; color:var(--ink-soft); margin:0 0 8px;">Efface définitivement défis, personnes, semaine, historique et identités de tous les membres. Irréversible.</p>
+        <button class="btn small" id="adminDeleteTeamBtn" style="background:#c0392b; box-shadow:0 3px 0 #922b21;">🗑️ Supprimer définitivement l'équipe</button>
+      </div>
     </section>
 
     <div class="footer-note">${state.historyCount} semaine${state.historyCount>1?'s':''} archivée${state.historyCount>1?'s':''} · fait pour l'équipe 👥</div>
@@ -769,6 +783,7 @@ function render(){
   renderPeople();
   renderSuggestions();
   renderPending();
+  renderAdminPeopleList();
   wireGlobalEvents();
   document.getElementById('settingsChangeIdBtn').addEventListener('click', () => showIdentityModal(true));
   document.getElementById('settingsSignOutBtn').addEventListener('click', () => signOut(auth));
@@ -786,6 +801,8 @@ function render(){
     renderApp();
   });
   document.getElementById('settingsDeleteBtn').addEventListener('click', deleteMyAccount);
+  document.getElementById('adminResetWeekBtn').addEventListener('click', resetWeekProgress);
+  document.getElementById('adminDeleteTeamBtn').addEventListener('click', deleteEntireTeam);
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => { currentPage = btn.dataset.page; renderApp(); });
   });
@@ -961,6 +978,27 @@ function renderPeople(){
   });
   grid.querySelectorAll('.remove-p').forEach(b => {
     b.addEventListener('click', async e => {
+      try{ await removePerson(e.target.dataset.person); }
+      catch(err){ showErrorToast(err); }
+    });
+  });
+}
+
+function renderAdminPeopleList(){
+  const el = document.getElementById('adminPeopleList');
+  if(!el) return;
+  if(state.people.length === 0){
+    el.innerHTML = `<span style="font-family:'Quicksand'; font-size:0.82rem; color:var(--ink-soft);">Personne dans l'équipe.</span>`;
+    return;
+  }
+  el.innerHTML = state.people.map(p => `
+    <div style="display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,0.7); border-radius:8px; padding:6px 10px;">
+      <span style="font-family:'Quicksand'; font-size:0.85rem;">${escapeAttr(p)}</span>
+      <button class="btn ghost small" data-person="${escapeAttr(p)}" style="padding:3px 8px;">Retirer</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('button[data-person]').forEach(btn => {
+    btn.addEventListener('click', async e => {
       try{ await removePerson(e.target.dataset.person); }
       catch(err){ showErrorToast(err); }
     });
@@ -1165,6 +1203,45 @@ async function deleteMyAccount(){
   clearSavedTeamCode();
   await signOut(auth);
   showToast('Compte supprimé de cette équipe 👋');
+}
+
+async function resetWeekProgress(){
+  if(!confirm('Réinitialiser tous les votes et statuts de la semaine en cours ? Les personnes, les défis et l\'attribution actuelle sont conservés — seule la progression (💗/💔/⏳) est effacée.')) return;
+  try{
+    await updateWeek(week => {
+      state.people.forEach(p => { week.checks[p] = new Array(getDays().length).fill(null).map(blankDay); });
+    });
+    showToast('Semaine réinitialisée ↺');
+  }catch(err){ showErrorToast(err); }
+}
+
+// Efface DÉFINITIVEMENT toutes les données de l'équipe courante (défis,
+// personnes, semaine, historique, identités de TOUS les membres — pas
+// seulement la tienne), puis déconnecte. Les identités d'autres membres ne
+// sont supprimables que si les règles Firestore autorisent la suppression
+// par n'importe quel membre authentifié de l'équipe (pas seulement le
+// propriétaire du uid) sur ce sous-chemin précis — sinon ces documents-là
+// restent orphelins (le reste de l'équipe est bien effacé).
+async function deleteEntireTeam(){
+  if(!teamCode) return;
+  if(!confirm(`Supprimer DÉFINITIVEMENT l'équipe "${teamCode}" et toutes ses données (défis, personnes, semaine, historique, identités) ? Cette action est irréversible et affecte tous les membres.`)) return;
+  if(!confirm('Vraiment sûr·e ? Il n\'y a aucun moyen de revenir en arrière après ça.')) return;
+  try{
+    const [historySnap, identitiesSnap] = await Promise.all([
+      getDocs(historyCollection()),
+      getDocs(collection(teamRoot(), 'identities'))
+    ]);
+    await Promise.all([
+      deleteDoc(docRef('defis')),
+      deleteDoc(docRef('people')),
+      deleteDoc(docRef('week')),
+      ...historySnap.docs.map(d => deleteDoc(d.ref)),
+      ...identitiesSnap.docs.map(d => deleteDoc(d.ref))
+    ]);
+  }catch(err){ showErrorToast(err); return; }
+  clearSavedTeamCode();
+  await signOut(auth);
+  showToast('Équipe supprimée définitivement 🗑️');
 }
 
 startAuth();
