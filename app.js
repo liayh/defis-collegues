@@ -16,7 +16,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, setDoc, onSnapshot, runTransaction
+  getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, runTransaction
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
@@ -670,7 +670,7 @@ function render(){
     </div>
 
     <div class="who-line">
-      <span class="who-badge">🙋 Toi : <b>${myName ? escapeAttr(myName) : '?'}</b> <button id="changeIdBtn">changer</button> · <button id="signOutBtn">se déconnecter</button></span>
+      <span class="who-badge">🙋 Toi : <b>${myName ? escapeAttr(myName) : '?'}</b> <button id="changeIdBtn">changer</button> · <button id="signOutBtn">se déconnecter</button> · <button id="deleteAccountBtn">supprimer mon compte</button></span>
       <span class="who-badge">🔑 Équipe : <b>${escapeAttr(teamCode || '?')}</b> <button id="copyTeamCodeBtn" title="Copier le code">copier</button> · <button id="changeTeamBtn">changer d'équipe</button></span>
     </div>
 
@@ -736,6 +736,7 @@ function render(){
   wireGlobalEvents();
   document.getElementById('changeIdBtn').addEventListener('click', () => showIdentityModal(true));
   document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
+  document.getElementById('deleteAccountBtn').addEventListener('click', deleteMyAccount);
   document.getElementById('copyTeamCodeBtn').addEventListener('click', async () => {
     try{ await navigator.clipboard.writeText(teamCode); showToast('Code copié 📋'); }
     catch(e){ showToast(`Code : ${teamCode}`); }
@@ -1103,6 +1104,25 @@ async function setIdentity(name){
   if(overlay) overlay.remove();
   renderApp();
   showToast(`Bienvenue ${name} 👋`);
+}
+
+// Retire ton nom et tes données (défi assigné, votes) de l'équipe courante,
+// supprime le lien entre ton compte Google et ce prénom, puis déconnecte —
+// ne touche ni au compte Google en lui-même (l'app ne peut pas le supprimer),
+// ni aux autres équipes auxquelles tu pourrais appartenir avec un autre code.
+async function deleteMyAccount(){
+  if(!myUid) return;
+  const confirmMsg = myName
+    ? `Supprimer ton profil "${myName}" de cette équipe ? Ton nom, ton défi assigné et tes votes seront retirés, et tu seras déconnecté.`
+    : 'Supprimer ton compte de cette équipe et te déconnecter ?';
+  if(!confirm(confirmMsg)) return;
+  try{
+    if(myName) await removePerson(myName);
+    await deleteDoc(identityRef(myUid));
+  }catch(err){ showErrorToast(err); return; }
+  clearSavedTeamCode();
+  await signOut(auth);
+  showToast('Compte supprimé de cette équipe 👋');
 }
 
 startAuth();
