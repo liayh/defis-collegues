@@ -11,6 +11,14 @@
    5. Authentication → Settings → Authorized domains → ajoute le domaine
       où cette page sera hébergée (ex: tonpseudo.github.io).
    ================================================================== */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+import {
+  getFirestore, collection, doc, getDoc, setDoc, onSnapshot, runTransaction
+} from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
+
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
 // L'accès aux données est protégé par les règles de sécurité Firestore, pas par cette clé.
 const firebaseConfig = {
@@ -25,11 +33,37 @@ const CONFIG_READY = !Object.values(firebaseConfig).some(v => v.includes('REMPLA
 const APP_NS = 'defisCollegues';
 
 let auth, db;
+let firebaseInitError = null;
 if(CONFIG_READY){
-  firebase.initializeApp(firebaseConfig);
-  auth = firebase.auth();
-  db = firebase.firestore();
+  try{
+    const fbApp = initializeApp(firebaseConfig);
+    auth = getAuth(fbApp);
+    db = getFirestore(fbApp);
+  }catch(e){
+    console.error('Échec d\'initialisation Firebase', e);
+    firebaseInitError = e;
+  }
 }
+
+// Filet de sécurité : si rien n'a remplacé l'écran de chargement initial après
+// quelques secondes (SDK qui ne charge pas, réseau filtré/instable, erreur
+// Firestore non rattrapée...), on affiche une erreur explicite avec un bouton
+// pour réessayer plutôt que de laisser l'utilisateur bloqué sans indication.
+function showBootError(message){
+  const app = document.getElementById('app');
+  if(!app) return;
+  app.innerHTML = `
+    <div class="loading">
+      ⚠️ ${message}<br>
+      <button class="btn small" style="margin-top:14px;" onclick="location.reload()">Réessayer</button>
+    </div>`;
+}
+setTimeout(() => {
+  const app = document.getElementById('app');
+  if(app && app.querySelector('.loading')){
+    showBootError('La connexion à Firebase prend trop de temps. Vérifie ta connexion internet (Wi-Fi/données mobiles), ou réessaie.');
+  }
+}, 8000);
 
 /* ---------------- Seed data ---------------- */
 const SUGGESTIONS = {
@@ -316,18 +350,18 @@ function getMandatoryWord(){
    `.set(state.xxx)` à partir de l'état local. Ça évite qu'un vote ou une
    édition d'un collègue écrase silencieusement celui d'un autre si les deux
    arrivent à quelques centaines de ms d'écart. */
-function teamRoot(){ return db.collection(APP_NS + '_teams').doc(teamCode); }
-function docRef(name){ return teamRoot().collection('state').doc(name); }
-function identityRef(uid){ return teamRoot().collection('identities').doc(uid); }
+function teamRoot(){ return doc(db, APP_NS + '_teams', teamCode); }
+function docRef(name){ return doc(collection(teamRoot(), 'state'), name); }
+function identityRef(uid){ return doc(collection(teamRoot(), 'identities'), uid); }
 // Un document par semaine archivée plutôt qu'un unique tableau qui grossirait
 // indéfiniment (et finirait par dépasser la limite de 1 Mo par document Firestore).
-function historyCollection(){ return teamRoot().collection('history'); }
+function historyCollection(){ return collection(teamRoot(), 'history'); }
 
 async function updateWeek(mutator){
   const ref = docRef('week');
-  return db.runTransaction(async tx => {
+  return runTransaction(db, async tx => {
     const snap = await tx.get(ref);
-    const week = snap.exists ? snap.data() : newWeek(assignRandomly());
+    const week = snap.exists() ? snap.data() : newWeek(assignRandomly());
     ensureWeekShape(week, state.people);
     const result = mutator(week);
     tx.set(ref, week);
@@ -337,9 +371,9 @@ async function updateWeek(mutator){
 
 async function updateDefis(mutator){
   const ref = docRef('defis');
-  return db.runTransaction(async tx => {
+  return runTransaction(db, async tx => {
     const snap = await tx.get(ref);
-    const defis = (snap.exists && snap.data().list) || [];
+    const defis = (snap.exists() && snap.data().list) || [];
     const result = mutator(defis);
     tx.set(ref, { list: defis });
     return result;
@@ -348,15 +382,15 @@ async function updateDefis(mutator){
 
 async function addPersonCore(name){
   let added = true;
-  await db.runTransaction(async tx => {
+  await runTransaction(db, async tx => {
     const peopleRef = docRef('people');
     const weekRef = docRef('week');
     const peopleSnap = await tx.get(peopleRef);
     const weekSnap = await tx.get(weekRef);
-    const people = (peopleSnap.exists && peopleSnap.data().list) || [];
+    const people = (peopleSnap.exists() && peopleSnap.data().list) || [];
     if(people.includes(name)){ added = false; return; }
     people.push(name);
-    const week = weekSnap.exists ? weekSnap.data() : newWeek({});
+    const week = weekSnap.exists() ? weekSnap.data() : newWeek({});
     ensureWeekShape(week, people);
     if(state.defis.length) week.assignments[name] = state.defis[Math.floor(Math.random()*state.defis.length)].id;
     tx.set(peopleRef, { list: people });
@@ -366,13 +400,13 @@ async function addPersonCore(name){
 }
 
 async function removePerson(person){
-  await db.runTransaction(async tx => {
+  await runTransaction(db, async tx => {
     const peopleRef = docRef('people');
     const weekRef = docRef('week');
     const peopleSnap = await tx.get(peopleRef);
     const weekSnap = await tx.get(weekRef);
-    const people = ((peopleSnap.exists && peopleSnap.data().list) || []).filter(p => p !== person);
-    const week = weekSnap.exists ? weekSnap.data() : newWeek({});
+    const people = ((peopleSnap.exists() && peopleSnap.data().list) || []).filter(p => p !== person);
+    const week = weekSnap.exists() ? weekSnap.data() : newWeek({});
     delete week.assignments[person];
     delete week.checks[person];
     tx.set(peopleRef, { list: people });
@@ -444,8 +478,8 @@ function showSignInScreen(){
   `;
   if(CONFIG_READY){
     document.getElementById('googleSignInBtn').addEventListener('click', () => {
-      const provider = new firebase.auth.GoogleAuthProvider();
-      auth.signInWithPopup(provider).catch(() => showToast('Connexion annulée ou refusée'));
+      const provider = new GoogleAuthProvider();
+      signInWithPopup(auth, provider).catch(() => showToast('Connexion annulée ou refusée'));
     });
   }
 }
@@ -492,22 +526,22 @@ async function initData(){
   await new Promise(resolve => {
     let done = 0;
     const check = () => { done++; if(done === 2) resolve(); };
-    unsubList.push(docRef('defis').onSnapshot(async snap => {
-      if(snap.exists && snap.data().list){ state.defis = snap.data().list; }
-      else { state.defis = DEFAULT_DEFIS; await docRef('defis').set({ list: state.defis }); }
+    unsubList.push(onSnapshot(docRef('defis'), async snap => {
+      if(snap.exists() && snap.data().list){ state.defis = snap.data().list; }
+      else { state.defis = DEFAULT_DEFIS; await setDoc(docRef('defis'), { list: state.defis }); }
       if(!defisReady){ defisReady = true; check(); }
       renderApp();
     }));
-    unsubList.push(docRef('people').onSnapshot(async snap => {
-      if(snap.exists && snap.data().list){ state.people = snap.data().list; }
-      else { state.people = DEFAULT_PEOPLE; await docRef('people').set({ list: state.people }); }
+    unsubList.push(onSnapshot(docRef('people'), async snap => {
+      if(snap.exists() && snap.data().list){ state.people = snap.data().list; }
+      else { state.people = DEFAULT_PEOPLE; await setDoc(docRef('people'), { list: state.people }); }
       if(!peopleReady){ peopleReady = true; check(); }
       renderApp();
     }));
   });
 
-  unsubList.push(docRef('week').onSnapshot(async snap => {
-    if(snap.exists && snap.data().label === currentWeekLabel()){
+  unsubList.push(onSnapshot(docRef('week'), async snap => {
+    if(snap.exists() && snap.data().label === currentWeekLabel()){
       state.week = snap.data();
       ensureWeekShape(state.week, state.people);
       renderApp();
@@ -515,17 +549,17 @@ async function initData(){
     } else if(!weekInitInProgress){
       weekInitInProgress = true;
       try{
-        await db.runTransaction(async tx => {
+        await runTransaction(db, async tx => {
           const ref = docRef('week');
           const fresh = await tx.get(ref);
-          if(!fresh.exists || fresh.data().label !== currentWeekLabel()){
+          if(!fresh.exists() || fresh.data().label !== currentWeekLabel()){
             tx.set(ref, newWeek(assignRandomly()));
           }
         });
       } finally { weekInitInProgress = false; }
     }
   }));
-  unsubList.push(historyCollection().onSnapshot(snap => {
+  unsubList.push(onSnapshot(historyCollection(), snap => {
     state.historyCount = snap.size;
     renderApp();
   }));
@@ -533,27 +567,43 @@ async function initData(){
 
 function startAuth(){
   if(!CONFIG_READY){ showSignInScreen(); return; }
-  auth.onAuthStateChanged(async user => {
+  if(firebaseInitError || !auth){
+    showBootError('Firebase n\'a pas pu démarrer. Vérifie ta connexion internet et réessaie.');
+    return;
+  }
+  onAuthStateChanged(auth, async user => {
     detachAll();
-    if(!user){
-      myUid = null; myName = null; teamCode = null;
-      showSignInScreen();
-      return;
+    try{
+      if(!user){
+        myUid = null; myName = null; teamCode = null;
+        showSignInScreen();
+        return;
+      }
+      myUid = user.uid;
+      const savedTeamCode = getSavedTeamCode();
+      if(!savedTeamCode){
+        showTeamScreen();
+        return;
+      }
+      teamCode = savedTeamCode;
+      await bootTeamData();
+    }catch(e){
+      // Filet essentiel : sans lui, une erreur ici (ex: règles Firestore qui ne
+      // correspondent plus à la structure attendue par ce code) reste une
+      // promesse rejetée non gérée et laisse l'écran de chargement figé pour
+      // toujours, sans aucune indication pour l'utilisateur.
+      console.error('Échec du démarrage après connexion', e);
+      showBootError('Impossible de charger tes données. Vérifie ta connexion internet et réessaie.');
     }
-    myUid = user.uid;
-    const savedTeamCode = getSavedTeamCode();
-    if(!savedTeamCode){
-      showTeamScreen();
-      return;
-    }
-    teamCode = savedTeamCode;
-    await bootTeamData();
+  }, err => {
+    console.error('onAuthStateChanged error', err);
+    showBootError('Impossible de vérifier ta connexion. Vérifie ta connexion internet et réessaie.');
   });
 }
 
 async function bootTeamData(){
-  const idSnap = await identityRef(myUid).get();
-  myName = idSnap.exists ? idSnap.data().name : null;
+  const idSnap = await getDoc(identityRef(myUid));
+  myName = idSnap.exists() ? idSnap.data().name : null;
   await initData();
   if(!myName) showIdentityModal(false);
 }
@@ -684,7 +734,7 @@ function render(){
   renderPending();
   wireGlobalEvents();
   document.getElementById('changeIdBtn').addEventListener('click', () => showIdentityModal(true));
-  document.getElementById('signOutBtn').addEventListener('click', () => auth.signOut());
+  document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
   document.getElementById('copyTeamCodeBtn').addEventListener('click', async () => {
     try{ await navigator.clipboard.writeText(teamCode); showToast('Code copié 📋'); }
     catch(e){ showToast(`Code : ${teamCode}`); }
@@ -971,12 +1021,12 @@ function wireGlobalEvents(){
   });
   document.getElementById('newWeekBtn').addEventListener('click', async () => {
     try{
-      await db.runTransaction(async tx => {
+      await runTransaction(db, async tx => {
         const weekRef = docRef('week');
         const weekSnap = await tx.get(weekRef);
-        const finishedWeek = weekSnap.exists ? weekSnap.data() : null;
+        const finishedWeek = weekSnap.exists() ? weekSnap.data() : null;
         const nextWeek = newWeek(assignRandomly());
-        if(finishedWeek) tx.set(historyCollection().doc(), { ...finishedWeek, archivedAt: Date.now() });
+        if(finishedWeek) tx.set(doc(historyCollection()), { ...finishedWeek, archivedAt: Date.now() });
         tx.set(weekRef, nextWeek);
       });
       showToast('Nouvelle semaine lancée 📅');
@@ -1045,7 +1095,7 @@ function showIdentityModal(dismissable){
 
 async function setIdentity(name){
   try{
-    await identityRef(myUid).set({ name, email: auth.currentUser ? auth.currentUser.email : null });
+    await setDoc(identityRef(myUid), { name, email: auth.currentUser ? auth.currentUser.email : null });
   }catch(err){ showErrorToast(err); return; }
   myName = name;
   const overlay = document.getElementById('idModalOverlay');
