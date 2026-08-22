@@ -7,15 +7,21 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Caveat:wght@500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script>
+  function handleFirebaseScriptError(){
+    var app = document.getElementById('app');
+    if(app) app.innerHTML = '<div class="loading">⚠️ Impossible de charger Firebase (script bloqué ou réseau indisponible).<br>Vérifie ta connexion internet et réessaie.<br><button class="btn small" style="margin-top:14px;" onclick="location.reload()">Réessayer</button></div>';
+  }
+</script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js" onerror="handleFirebaseScriptError()"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js" onerror="handleFirebaseScriptError()"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js" onerror="handleFirebaseScriptError()"></script>
 </head>
 <body>
 <div class="wrap" id="app">
   <div class="loading">Connexion à Firebase… 🔥</div>
 </div>
 <div class="toast" id="toast"></div>
-<script src="app.js"></script>
+<script src="app.js" onerror="handleFirebaseScriptError()"></script>
 </body>
 </html>

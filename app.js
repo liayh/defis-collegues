@@ -25,11 +25,38 @@ const CONFIG_READY = !Object.values(firebaseConfig).some(v => v.includes('REMPLA
 const APP_NS = 'defisCollegues';
 
 let auth, db;
+let firebaseInitError = null;
 if(CONFIG_READY){
-  firebase.initializeApp(firebaseConfig);
-  auth = firebase.auth();
-  db = firebase.firestore();
+  try{
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+  }catch(e){
+    console.error('Échec d\'initialisation Firebase', e);
+    firebaseInitError = e;
+  }
 }
+
+// Filet de sécurité : si rien n'a remplacé l'écran de chargement initial après
+// quelques secondes (SDK Firebase qui ne charge pas, réseau filtré/instable,
+// auth qui ne répond jamais...), on affiche une erreur explicite avec un
+// bouton pour réessayer plutôt que de laisser l'utilisateur bloqué sans
+// aucune indication sur un écran qui ne bougera jamais.
+function showBootError(message){
+  const app = document.getElementById('app');
+  if(!app) return;
+  app.innerHTML = `
+    <div class="loading">
+      ⚠️ ${message}<br>
+      <button class="btn small" style="margin-top:14px;" onclick="location.reload()">Réessayer</button>
+    </div>`;
+}
+setTimeout(() => {
+  const app = document.getElementById('app');
+  if(app && app.querySelector('.loading')){
+    showBootError('La connexion à Firebase prend trop de temps. Vérifie ta connexion internet (Wi-Fi/données mobiles) — certains réseaux d\'entreprise bloquent les services Google.');
+  }
+}, 8000);
 
 /* ---------------- Seed data ---------------- */
 const SUGGESTIONS = {
@@ -475,6 +502,10 @@ async function initData(){
 
 function startAuth(){
   if(!CONFIG_READY){ showSignInScreen(); return; }
+  if(firebaseInitError || !auth){
+    showBootError('Firebase n\'a pas pu démarrer. Vérifie ta connexion internet et réessaie.');
+    return;
+  }
   auth.onAuthStateChanged(async user => {
     detachAll();
     if(!user){
@@ -487,6 +518,9 @@ function startAuth(){
     myName = idSnap.exists ? idSnap.data().name : null;
     await initData();
     if(!myName) showIdentityModal(false);
+  }, err => {
+    console.error('onAuthStateChanged error', err);
+    showBootError('Impossible de vérifier ta connexion. Vérifie ta connexion internet et réessaie.');
   });
 }
 
