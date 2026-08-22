@@ -177,6 +177,25 @@ let myUid = null;
 let currentPage = 'semaine';
 let unsubList = [];
 let defisReady = false, peopleReady = false, weekInitInProgress = false;
+
+/* ---------------- Équipe (isole les données d'un groupe de travail) ----------------
+   Sans ça, tout le monde qui a le lien et un compte Google atterrit sur le même
+   tableau — n'importe qui pourrait rejoindre la session d'une autre équipe. Le
+   code d'équipe scope toutes les collections Firestore sous defisCollegues_teams/{code},
+   sur le même principe que le code famille de Mission Famille : la sécurité vient
+   de la connaissance du code, pas d'une identité vérifiée. */
+const TEAM_CODE_KEY = 'defisColleguesTeamCode';
+const TEAM_CODE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O/1/I/l (ambigus)
+let teamCode = null;
+
+function getSavedTeamCode(){ return localStorage.getItem(TEAM_CODE_KEY); }
+function saveTeamCode(code){ localStorage.setItem(TEAM_CODE_KEY, code); }
+function clearSavedTeamCode(){ localStorage.removeItem(TEAM_CODE_KEY); }
+function generateTeamCode(){
+  let code = '';
+  for(let i=0;i<7;i++) code += TEAM_CODE_CHARSET[Math.floor(Math.random()*TEAM_CODE_CHARSET.length)];
+  return code;
+}
 const notifiedIds = new Set();
 let prevPendingKeys = new Set();
 
@@ -297,11 +316,12 @@ function getMandatoryWord(){
    `.set(state.xxx)` à partir de l'état local. Ça évite qu'un vote ou une
    édition d'un collègue écrase silencieusement celui d'un autre si les deux
    arrivent à quelques centaines de ms d'écart. */
-function docRef(name){ return db.collection(APP_NS).doc(name); }
-function identityRef(uid){ return db.collection(APP_NS + '_identities').doc(uid); }
+function teamRoot(){ return db.collection(APP_NS + '_teams').doc(teamCode); }
+function docRef(name){ return teamRoot().collection('state').doc(name); }
+function identityRef(uid){ return teamRoot().collection('identities').doc(uid); }
 // Un document par semaine archivée plutôt qu'un unique tableau qui grossirait
 // indéfiniment (et finirait par dépasser la limite de 1 Mo par document Firestore).
-function historyCollection(){ return db.collection(APP_NS + '_history'); }
+function historyCollection(){ return teamRoot().collection('history'); }
 
 async function updateWeek(mutator){
   const ref = docRef('week');
@@ -430,6 +450,44 @@ function showSignInScreen(){
   }
 }
 
+function showTeamScreen(){
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="hero">
+      <div class="pin tl"></div>
+      <svg class="cloud" viewBox="0 0 100 60"><ellipse cx="30" cy="38" rx="26" ry="20" fill="#fff"/><ellipse cx="60" cy="30" rx="30" ry="24" fill="#fff"/><ellipse cx="82" cy="42" rx="18" ry="15" fill="#fff"/><circle cx="52" cy="28" r="2.4" fill="#333"/><circle cx="66" cy="28" r="2.4" fill="#333"/><ellipse cx="59" cy="35" rx="6" ry="3" fill="#ffb3c6" opacity="0.7"/></svg>
+      <h1>Listing</h1>
+      <div class="sub">Défis <span class="note-emoji">🎵</span></div>
+      <div class="mode-toggle"><span class="mode-btn active colleagues" style="cursor:default;">👥 Équipe de travail</span></div>
+    </div>
+    <div style="text-align:center; margin-top:34px; max-width:360px; margin-left:auto; margin-right:auto;">
+      <p style="font-family:'Caveat'; font-size:1.3rem;">Crée une équipe, ou rejoins-en une avec le code partagé par un collègue.</p>
+      <button class="btn" id="createTeamBtn">✨ Créer une nouvelle équipe</button>
+      <div style="font-family:'Quicksand'; color:var(--ink-soft); font-size:0.8rem; margin:14px 0;">— ou —</div>
+      <div class="add-person" style="max-width:none;">
+        <input id="joinTeamInput" placeholder="Code d'équipe (ex: AB3D9KX)" style="text-transform:uppercase;" />
+        <button class="btn small" id="joinTeamBtn">Rejoindre</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('createTeamBtn').addEventListener('click', () => {
+    const code = generateTeamCode();
+    saveTeamCode(code);
+    teamCode = code;
+    bootTeamData();
+    showToast(`Équipe créée — code à partager : ${code} 🔑`);
+  });
+  const join = () => {
+    const val = document.getElementById('joinTeamInput').value.trim().toUpperCase();
+    if(!val) return;
+    saveTeamCode(val);
+    teamCode = val;
+    bootTeamData();
+  };
+  document.getElementById('joinTeamBtn').addEventListener('click', join);
+  document.getElementById('joinTeamInput').addEventListener('keydown', e => { if(e.key==='Enter') join(); });
+}
+
 async function initData(){
   await new Promise(resolve => {
     let done = 0;
@@ -478,16 +536,36 @@ function startAuth(){
   auth.onAuthStateChanged(async user => {
     detachAll();
     if(!user){
-      myUid = null; myName = null;
+      myUid = null; myName = null; teamCode = null;
       showSignInScreen();
       return;
     }
     myUid = user.uid;
-    const idSnap = await identityRef(myUid).get();
-    myName = idSnap.exists ? idSnap.data().name : null;
-    await initData();
-    if(!myName) showIdentityModal(false);
+    const savedTeamCode = getSavedTeamCode();
+    if(!savedTeamCode){
+      showTeamScreen();
+      return;
+    }
+    teamCode = savedTeamCode;
+    await bootTeamData();
   });
+}
+
+async function bootTeamData(){
+  const idSnap = await identityRef(myUid).get();
+  myName = idSnap.exists ? idSnap.data().name : null;
+  await initData();
+  if(!myName) showIdentityModal(false);
+}
+
+function changeTeam(){
+  detachAll();
+  clearSavedTeamCode();
+  teamCode = null;
+  myName = null;
+  state = { defis: [], people: [], week: null, historyCount: 0 };
+  currentPage = 'semaine';
+  showTeamScreen();
 }
 
 /* ---------------- Rendering ----------------
@@ -540,7 +618,10 @@ function render(){
       <div class="mode-toggle"><span class="mode-btn active colleagues" style="cursor:default;">👥 Équipe de travail</span></div>
     </div>
 
-    <div class="who-line"><span class="who-badge">🙋 Toi : <b>${myName ? escapeAttr(myName) : '?'}</b> <button id="changeIdBtn">changer</button> · <button id="signOutBtn">se déconnecter</button></span></div>
+    <div class="who-line">
+      <span class="who-badge">🙋 Toi : <b>${myName ? escapeAttr(myName) : '?'}</b> <button id="changeIdBtn">changer</button> · <button id="signOutBtn">se déconnecter</button></span>
+      <span class="who-badge">🔑 Équipe : <b>${escapeAttr(teamCode || '?')}</b> <button id="copyTeamCodeBtn" title="Copier le code">copier</button> · <button id="changeTeamBtn">changer d'équipe</button></span>
+    </div>
 
     <div class="tab-bar">
       <button class="tab-btn ${currentPage==='defis'?'active':''}" data-page="defis">📌 Défis</button>
@@ -604,6 +685,13 @@ function render(){
   wireGlobalEvents();
   document.getElementById('changeIdBtn').addEventListener('click', () => showIdentityModal(true));
   document.getElementById('signOutBtn').addEventListener('click', () => auth.signOut());
+  document.getElementById('copyTeamCodeBtn').addEventListener('click', async () => {
+    try{ await navigator.clipboard.writeText(teamCode); showToast('Code copié 📋'); }
+    catch(e){ showToast(`Code : ${teamCode}`); }
+  });
+  document.getElementById('changeTeamBtn').addEventListener('click', () => {
+    if(confirm('Quitter cette équipe et en choisir/créer une autre ?')) changeTeam();
+  });
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => { currentPage = btn.dataset.page; renderApp(); });
   });
