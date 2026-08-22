@@ -16,7 +16,8 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction
+  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction,
+  addDoc, query, orderBy, limit, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
@@ -204,7 +205,7 @@ function currentWeekLabel(){
 }
 
 /* ---------------- App state (in-memory mirror of Firestore) ---------------- */
-let state = { defis: [], people: [], week: null, historyCount: 0 };
+let state = { defis: [], people: [], week: null, historyCount: 0, messages: [] };
 let myName = null;
 let myUid = null;
 let currentPage = 'semaine';
@@ -355,6 +356,7 @@ function identityRef(uid){ return doc(collection(teamRoot(), 'identities'), uid)
 // Un document par semaine archivée plutôt qu'un unique tableau qui grossirait
 // indéfiniment (et finirait par dépasser la limite de 1 Mo par document Firestore).
 function historyCollection(){ return collection(teamRoot(), 'history'); }
+function chatCollection(){ return collection(teamRoot(), 'chat'); }
 
 async function updateWeek(mutator){
   const ref = docRef('week');
@@ -571,6 +573,10 @@ async function initData(){
     state.historyCount = snap.size;
     renderApp();
   }));
+  unsubList.push(onSnapshot(query(chatCollection(), orderBy('createdAt', 'asc'), limit(100)), snap => {
+    state.messages = snap.docs.map(message => ({ id: message.id, ...message.data() }));
+    renderApp();
+  }, showErrorToast));
 }
 
 function startAuth(){
@@ -621,7 +627,7 @@ function changeTeam(){
   clearSavedTeamCode();
   teamCode = null;
   myName = null;
-  state = { defis: [], people: [], week: null, historyCount: 0 };
+  state = { defis: [], people: [], week: null, historyCount: 0, messages: [] };
   currentPage = 'semaine';
   showTeamScreen();
 }
@@ -684,6 +690,7 @@ function render(){
       <button class="tab-btn ${currentPage==='defis'?'active':''}" data-page="defis">📌 Défis</button>
       <button class="tab-btn ${currentPage==='valider'?'active':''}" data-page="valider">🔔 À valider ${pendingCount ? `<span class="tab-badge">${pendingCount}</span>` : ''}</button>
       <button class="tab-btn ${currentPage==='semaine'?'active':''}" data-page="semaine">🗓️ Semaine</button>
+      <button class="tab-btn ${currentPage==='discussion'?'active':''}" data-page="discussion">💬 Discussion</button>
       <button class="tab-btn ${currentPage==='parametres'?'active':''}" data-page="parametres">⚙️ Paramètres</button>
     </div>
 
@@ -730,6 +737,20 @@ function render(){
       <div class="add-person">
         <input id="newPersonInput" placeholder="Ajouter une personne…" />
         <button class="btn small" id="addPersonBtn">Ajouter</button>
+      </div>
+    </section>
+
+    <section class="page ${currentPage==='discussion'?'active':''}" id="page-discussion">
+      <div class="chat-panel">
+        <div class="chat-title">
+          <h2>💬 Discussion de l'équipe</h2>
+          <span class="week-label">${state.people.length} collègue${state.people.length > 1 ? 's' : ''}</span>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <form class="chat-form" id="chatForm">
+          <input id="chatInput" maxlength="500" autocomplete="off" placeholder="Écrire un message à l'équipe…" />
+          <button class="btn blue" type="submit">Envoyer</button>
+        </form>
       </div>
     </section>
 
@@ -783,6 +804,7 @@ function render(){
   renderPeople();
   renderSuggestions();
   renderPending();
+  renderChat();
   renderAdminPeopleList();
   wireGlobalEvents();
   document.getElementById('settingsChangeIdBtn').addEventListener('click', () => showIdentityModal(true));
@@ -807,6 +829,22 @@ function render(){
     btn.addEventListener('click', () => { currentPage = btn.dataset.page; renderApp(); });
   });
   if(!myName) showIdentityModal(false);
+}
+
+function renderChat(){
+  const el = document.getElementById('chatMessages');
+  if(!el) return;
+  if(state.messages.length === 0){
+    el.innerHTML = `<div class="chat-empty">La discussion est ouverte : lancez le premier message ✨</div>`;
+    return;
+  }
+  el.innerHTML = state.messages.map(message => `
+    <div class="chat-message ${message.uid === myUid ? 'mine' : ''}">
+      <div class="chat-author">${escapeAttr(message.author || 'Collègue')}</div>
+      <div class="chat-body">${escapeAttr(message.text)}</div>
+    </div>
+  `).join('');
+  el.scrollTop = el.scrollHeight;
 }
 
 function renderSuggestions(){
@@ -1095,6 +1133,8 @@ function renderPending(){
 }
 
 function wireGlobalEvents(){
+  const chatForm = document.getElementById('chatForm');
+  if(chatForm) chatForm.addEventListener('submit', sendChatMessage);
   document.getElementById('shuffleBtn').addEventListener('click', async () => {
     try{
       await updateWeek(week => { week.assignments = assignRandomly(); });
@@ -1126,6 +1166,23 @@ function wireGlobalEvents(){
       });
     }catch(err){ showErrorToast(err); }
   });
+}
+
+async function sendChatMessage(event){
+  event.preventDefault();
+  if(!myName || !myUid) return showIdentityModal(false);
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if(!text) return;
+  input.disabled = true;
+  try{
+    await addDoc(chatCollection(), { text, author: myName, uid: myUid, createdAt: serverTimestamp() });
+    input.value = '';
+  }catch(err){ showErrorToast(err); }
+  finally{
+    input.disabled = false;
+    input.focus();
+  }
 }
 
 async function addPerson(){
