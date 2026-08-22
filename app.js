@@ -177,7 +177,6 @@ const DEFAULT_DEFIS = [
   { id: genId(), name: 'Déplacer les objets' },
   { id: genId(), name: 'Mot interdit', word: '' },
 ];
-const DEFAULT_PEOPLE = ['Karine','Edwina','Maélanie','Pauline','Marie Cha','Jeanne JCD','Alice','Jeanne S'];
 function getDays(){ return ['Lun','Mar','Mer','Jeu','Ven']; }
 const CARD_VARIANTS = ['v0','v1','v2','v3','v4','v5','v6','v7'];
 
@@ -533,8 +532,10 @@ async function initData(){
       renderApp();
     }));
     unsubList.push(onSnapshot(docRef('people'), async snap => {
+      // Pas de liste de personnes par défaut : une équipe nouvellement créée
+      // doit partir de zéro, pas hériter des collègues d'une autre équipe.
       if(snap.exists() && snap.data().list){ state.people = snap.data().list; }
-      else { state.people = DEFAULT_PEOPLE; await setDoc(docRef('people'), { list: state.people }); }
+      else { state.people = []; await setDoc(docRef('people'), { list: state.people }); }
       if(!peopleReady){ peopleReady = true; check(); }
       renderApp();
     }));
