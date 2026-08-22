@@ -16,7 +16,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, setDoc, onSnapshot, runTransaction
+  getFirestore, collection, doc, getDoc, setDoc, deleteDoc, onSnapshot, runTransaction
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
@@ -427,6 +427,13 @@ function showErrorToast(err){
   showToast('Erreur réseau, réessaie ⚠️');
 }
 
+function notificationStatusLabel(){
+  if(!('Notification' in window)) return 'Non supportées par ce navigateur.';
+  if(Notification.permission === 'granted') return 'Activées ✅';
+  if(Notification.permission === 'denied') return 'Bloquées — réactive-les dans les réglages du site de ton navigateur.';
+  return 'Pas encore activées.';
+}
+
 function tryNotify(title, body){
   if(!('Notification' in window)) return;
   if(Notification.permission === 'granted'){
@@ -670,14 +677,14 @@ function render(){
     </div>
 
     <div class="who-line">
-      <span class="who-badge">🙋 Toi : <b>${myName ? escapeAttr(myName) : '?'}</b> <button id="changeIdBtn">changer</button> · <button id="signOutBtn">se déconnecter</button></span>
-      <span class="who-badge">🔑 Équipe : <b>${escapeAttr(teamCode || '?')}</b> <button id="copyTeamCodeBtn" title="Copier le code">copier</button> · <button id="changeTeamBtn">changer d'équipe</button></span>
+      <span class="who-badge">🙋 <b>${myName ? escapeAttr(myName) : '?'}</b> · 🔑 <b>${escapeAttr(teamCode || '?')}</b></span>
     </div>
 
     <div class="tab-bar">
       <button class="tab-btn ${currentPage==='defis'?'active':''}" data-page="defis">📌 Défis</button>
       <button class="tab-btn ${currentPage==='valider'?'active':''}" data-page="valider">🔔 À valider ${pendingCount ? `<span class="tab-badge">${pendingCount}</span>` : ''}</button>
       <button class="tab-btn ${currentPage==='semaine'?'active':''}" data-page="semaine">🗓️ Semaine</button>
+      <button class="tab-btn ${currentPage==='parametres'?'active':''}" data-page="parametres">⚙️ Paramètres</button>
     </div>
 
     <section class="page ${currentPage==='defis'?'active':''}" id="page-defis">
@@ -726,6 +733,35 @@ function render(){
       </div>
     </section>
 
+    <section class="page ${currentPage==='parametres'?'active':''}" id="page-parametres">
+      <p class="panel-title">⚙️ Paramètres</p>
+
+      <div class="suggest-panel">
+        <p class="panel-title" style="margin:0 0 10px;">🙋 Ton profil</p>
+        <p style="font-family:'Quicksand'; font-size:0.9rem; margin:0 0 12px;">Prénom actuel : <b>${myName ? escapeAttr(myName) : '?'}</b></p>
+        <button class="btn small" id="settingsChangeIdBtn">Changer de prénom</button>
+      </div>
+
+      <div class="suggest-panel">
+        <p class="panel-title" style="margin:0 0 10px;">🔑 Équipe</p>
+        <p style="font-family:'Quicksand'; font-size:0.9rem; margin:0 0 12px;">Code actuel : <b>${escapeAttr(teamCode || '?')}</b> — partage-le pour inviter des collègues.</p>
+        <button class="btn small" id="settingsCopyTeamCodeBtn">📋 Copier le code</button>
+        <button class="btn ghost small" id="settingsChangeTeamBtn">Changer d'équipe</button>
+      </div>
+
+      <div class="suggest-panel">
+        <p class="panel-title" style="margin:0 0 10px;">🔔 Notifications</p>
+        <p style="font-family:'Quicksand'; font-size:0.9rem; margin:0 0 12px;">${notificationStatusLabel()}</p>
+        <button class="btn small" id="settingsNotifBtn">Activer les notifications</button>
+      </div>
+
+      <div class="suggest-panel">
+        <p class="panel-title" style="margin:0 0 10px;">🚪 Compte</p>
+        <button class="btn blue small" id="settingsSignOutBtn">Se déconnecter</button>
+        <button class="btn ghost small" id="settingsDeleteBtn" style="color:#c0392b; border-color:#e6b0aa;">Supprimer mon compte</button>
+      </div>
+    </section>
+
     <div class="footer-note">${state.historyCount} semaine${state.historyCount>1?'s':''} archivée${state.historyCount>1?'s':''} · fait pour l'équipe 👥</div>
   `;
 
@@ -734,15 +770,22 @@ function render(){
   renderSuggestions();
   renderPending();
   wireGlobalEvents();
-  document.getElementById('changeIdBtn').addEventListener('click', () => showIdentityModal(true));
-  document.getElementById('signOutBtn').addEventListener('click', () => signOut(auth));
-  document.getElementById('copyTeamCodeBtn').addEventListener('click', async () => {
+  document.getElementById('settingsChangeIdBtn').addEventListener('click', () => showIdentityModal(true));
+  document.getElementById('settingsSignOutBtn').addEventListener('click', () => signOut(auth));
+  document.getElementById('settingsCopyTeamCodeBtn').addEventListener('click', async () => {
     try{ await navigator.clipboard.writeText(teamCode); showToast('Code copié 📋'); }
     catch(e){ showToast(`Code : ${teamCode}`); }
   });
-  document.getElementById('changeTeamBtn').addEventListener('click', () => {
+  document.getElementById('settingsChangeTeamBtn').addEventListener('click', () => {
     if(confirm('Quitter cette équipe et en choisir/créer une autre ?')) changeTeam();
   });
+  document.getElementById('settingsNotifBtn').addEventListener('click', async () => {
+    if(!('Notification' in window)){ showToast('Notifications non supportées sur ce navigateur.'); return; }
+    const perm = await Notification.requestPermission();
+    showToast(perm === 'granted' ? 'Notifications activées 🔔' : 'Notifications non activées');
+    renderApp();
+  });
+  document.getElementById('settingsDeleteBtn').addEventListener('click', deleteMyAccount);
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => { currentPage = btn.dataset.page; renderApp(); });
   });
@@ -1103,6 +1146,25 @@ async function setIdentity(name){
   if(overlay) overlay.remove();
   renderApp();
   showToast(`Bienvenue ${name} 👋`);
+}
+
+// Retire ton nom et tes données (défi assigné, votes) de l'équipe courante,
+// supprime le lien entre ton compte Google et ce prénom, puis déconnecte —
+// ne touche ni au compte Google en lui-même (l'app ne peut pas le supprimer),
+// ni aux autres équipes auxquelles tu pourrais appartenir avec un autre code.
+async function deleteMyAccount(){
+  if(!myUid) return;
+  const confirmMsg = myName
+    ? `Supprimer ton profil "${myName}" de cette équipe ? Ton nom, ton défi assigné et tes votes seront retirés, et tu seras déconnecté.`
+    : 'Supprimer ton compte de cette équipe et te déconnecter ?';
+  if(!confirm(confirmMsg)) return;
+  try{
+    if(myName) await removePerson(myName);
+    await deleteDoc(identityRef(myUid));
+  }catch(err){ showErrorToast(err); return; }
+  clearSavedTeamCode();
+  await signOut(auth);
+  showToast('Compte supprimé de cette équipe 👋');
 }
 
 startAuth();
