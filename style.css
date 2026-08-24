@@ -172,6 +172,11 @@ body{
 .suggest-panel .sp-head{
   display:flex; align-items:center; justify-content: space-between; margin-bottom: 8px;
 }
+.suggest-search{
+  width:100%; box-sizing:border-box; padding: 7px 10px; margin-bottom: 10px;
+  border-radius: 8px; border: 1px solid rgba(0,0,0,0.15);
+  font-family:'Quicksand'; font-size: 0.85rem; background: rgba(255,255,255,0.7);
+}
 .cat-filters{
   display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
 }

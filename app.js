@@ -219,6 +219,7 @@ let myName = null;
 let myUid = null;
 let currentPage = 'semaine';
 let suggestionFilter = null;
+let suggestionSearch = '';
 let unsubList = [];
 let defisReady = false, peopleReady = false, weekInitInProgress = false;
 
@@ -352,18 +353,31 @@ function successCount(person){
 // Classement toutes semaines confondues (archivées + semaine en cours), pour
 // donner un aspect un peu plus ludique/compétitif à l'appli au-delà de la
 // seule semaine affichée.
+// Classement en taux de réussite (défis validés / défis tranchés) plutôt
+// qu'en valeur absolue : sinon quelqu'un ayant rejoint l'équipe récemment
+// ne pourrait jamais rattraper les autres, même en réussissant tout.
 function leaderboard(){
   const totals = {};
-  const bump = (person, n) => { if(n) totals[person] = (totals[person] || 0) + n; };
+  const bump = (person, wins, resolved) => {
+    if(!totals[person]) totals[person] = { wins: 0, resolved: 0 };
+    totals[person].wins += wins;
+    totals[person].resolved += resolved;
+  };
   const weeks = state.week ? [...state.history, state.week] : state.history;
   weeks.forEach(week => {
     Object.entries(week.checks || {}).forEach(([person, days]) => {
-      bump(person, (days || []).filter(d => d && d.status === 'validated').length);
+      const arr = days || [];
+      const wins = arr.filter(d => d && d.status === 'validated').length;
+      const resolved = arr.filter(d => d && (d.status === 'validated' || d.status === 'rejected')).length;
+      bump(person, wins, resolved);
     });
   });
   return Object.entries(totals)
-    .map(([person, count]) => ({ person, count }))
-    .sort((a, b) => b.count - a.count);
+    .map(([person, t]) => ({
+      person, count: t.wins, resolved: t.resolved,
+      rate: t.resolved ? Math.round((t.wins / t.resolved) * 100) : null
+    }))
+    .sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || b.count - a.count);
 }
 
 function pendingItemsNeedingMyVote(){
@@ -823,6 +837,7 @@ function render(){
           <p class="panel-title" style="margin:0;">💡 Idées de défis bureau</p>
           <button class="btn ghost small" id="addAllBtn">Tout ajouter</button>
         </div>
+        <input id="suggestSearchInput" class="suggest-search" placeholder="Rechercher une idée…" value="${escapeAttr(suggestionSearch)}" />
         <div class="cat-filters" id="catFilters"></div>
         <div class="suggest-list" id="suggestList"></div>
       </div>
@@ -860,7 +875,7 @@ function render(){
     <section class="page ${currentPage==='classement'?'active':''}" id="page-classement">
       <p class="panel-title">🏆 Classement</p>
       <p style="font-family:'Quicksand'; font-size:0.8rem; color:var(--ink-soft); margin:0 0 14px;">
-        Défis réussis, toutes semaines confondues (${state.historyCount} archivée${state.historyCount>1?'s':''} + la semaine en cours).
+        Taux de réussite (défis validés / tranchés par vote), toutes semaines confondues (${state.historyCount} archivée${state.historyCount>1?'s':''} + la semaine en cours).
       </p>
       <div id="leaderboardList"></div>
     </section>
@@ -940,6 +955,10 @@ function render(){
 
   renderPad();
   renderPeople();
+  document.getElementById('suggestSearchInput').addEventListener('input', e => {
+    suggestionSearch = e.target.value;
+    renderSuggestions();
+  });
   renderCatFilters();
   renderSuggestions();
   renderPending();
@@ -1020,11 +1039,17 @@ function renderCatFilters(){
 
 function renderSuggestions(){
   const list = document.getElementById('suggestList');
-  const pool = suggestionFilter
+  let pool = suggestionFilter
     ? SUGGESTIONS.colleagues.filter(s => s.cat === suggestionFilter)
     : SUGGESTIONS.colleagues;
+  const query = normalize(suggestionSearch);
+  if(query) pool = pool.filter(s => normalize(s.text).includes(query));
   const existingNames = state.defis.map(d => normalize(d.name));
   list.innerHTML = '';
+  if(pool.length === 0){
+    list.innerHTML = `<div class="pending-empty">Aucune idée ne correspond 🔍</div>`;
+    return;
+  }
   pool.forEach(({ text, cat }) => {
     const already = existingNames.includes(normalize(text));
     const item = document.createElement('div');
@@ -1317,7 +1342,7 @@ function renderLeaderboard(){
   el.innerHTML = ranking.map((row, i) => `
     <div class="pending-row">
       <div class="pr-text">${RANK_MEDALS[i] || `#${i+1}`} <b>${escapeAttr(row.person)}</b></div>
-      <div class="pr-votes">${row.count} défi${row.count>1?'s':''} réussi${row.count>1?'s':''}</div>
+      <div class="pr-votes">${row.rate === null ? 'aucun défi tranché' : `${row.rate}% · ${row.count}/${row.resolved} réussis`}</div>
     </div>
   `).join('');
 }
@@ -1482,6 +1507,12 @@ async function deleteEntireTeam(){
   clearSavedTeamCode();
   await signOut(auth);
   showToast('Équipe supprimée définitivement 🗑️');
+}
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(e => console.error('Échec d\'enregistrement du service worker', e));
+  });
 }
 
 startAuth();
