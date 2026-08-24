@@ -172,6 +172,17 @@ body{
 .suggest-panel .sp-head{
   display:flex; align-items:center; justify-content: space-between; margin-bottom: 8px;
 }
+.cat-filters{
+  display:flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;
+}
+.cat-pill{
+  font-family:'Quicksand'; font-weight: 600; font-size: 0.75rem;
+  border: 1.5px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.6);
+  color: var(--ink-soft); border-radius: 20px; padding: 4px 11px; cursor:pointer;
+}
+.cat-pill.active{
+  background: var(--pink); border-color: var(--pink); color: white;
+}
 .suggest-list{
   display:flex; flex-direction: column; gap: 5px;
   max-height: 260px; overflow-y: auto; padding-right: 4px;

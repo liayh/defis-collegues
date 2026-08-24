@@ -67,108 +67,117 @@ setTimeout(() => {
 }, 8000);
 
 /* ---------------- Seed data ---------------- */
+const CATEGORIES = {
+  verbal:   { label: 'Verbal',      emoji: '🗣️' },
+  ecrit:    { label: 'Écrit',       emoji: '✍️' },
+  social:   { label: 'Social',      emoji: '🤝' },
+  discret:  { label: 'Discrétion',  emoji: '🤫' },
+  rituel:   { label: 'Rituel',      emoji: '🔁' },
+  attitude: { label: 'Attitude',    emoji: '🎭' }
+};
+
 const SUGGESTIONS = {
   colleagues: [
-    'Râler pour un oui ou un non',
-    'Souffler bruyamment entre deux tâches',
-    "Déplacer discrètement les objets d'un collègue",
-    'Mot interdit',
-    'Mot obligatoire à glisser dans une phrase',
-    'Complimenter chaque collègue croisé',
-    'Ne jamais dire "OK", trouver une autre formule',
-    'Répondre à une question par une autre question',
-    'Dire "excellente remarque" avant de répondre à quelqu\'un',
-    'Utiliser un surnom pour tout le monde',
-    'Applaudir discrètement après chaque appel ou réunion',
-    'Chuchoter une phrase sur trois',
-    'Changer de stylo à chaque nouvelle note',
-    'Proposer un café à quelqu\'un sans qu\'on demande',
-    'Marcher à petits pas pressés en toute circonstance',
-    'Terminer chaque échange par "à votre bon cœur"',
-    'Ranger un objet du bureau d\'un collègue façon feng shui',
-    'Se lever et s\'étirer ostensiblement toutes les heures',
-    'Dire bonjour à la même personne trois fois dans la journée',
-    'Signer chaque e-mail par une citation inventée sur le moment',
-    'Ne jamais s\'asseoir deux fois de suite à la même place',
-    'Parler avec une politesse extrême, façon lettre du XIXe siècle',
-    'Répondre "avec grand plaisir" à toute demande',
-    'Prendre ses notes uniquement sous forme de dessins',
-    'Parler de soi à la troisième personne une fois par jour',
-    'Prendre systématiquement les escaliers en chantonnant',
-    'Remercier l\'imprimante à voix haute après chaque impression',
-    'Réorganiser discrètement son bureau différemment chaque matin',
-    'Répondre au téléphone avec un nom de code inventé',
-    'Proposer un "brainstorm" même pour les décisions les plus anodines',
-    'Remplacer un mot courant du bureau par un synonyme rare',
-    'Faire un compliment sincère à un collègue qu\'on connaît peu',
-    'Ranger son bureau à la même minute précise chaque jour',
-    'Ne jamais dire "je ne sais pas", inventer une réponse',
-    'Saluer la plante verte du bureau en arrivant',
-    'Toujours dire "roger" au lieu de "d\'accord"',
-    'Parler uniquement par questions pendant une réunion entière',
-    'Se présenter à un collègue comme si c\'était la première fois',
-    'Écrire une phrase du jour sur un post-it affiché discrètement',
-    'Ne jamais refuser un "santé" virtuel en visioconférence',
-    'Adopter un léger accent différent chaque jour de la semaine',
-    'Faire une remarque "gratitude" avant chaque réunion',
-    'Remplacer le mot "problème" par "opportunité" toute la journée',
-    'Glisser un jeu de mots dans chaque e-mail envoyé',
-    'Applaudir silencieusement une bonne nouvelle, sans bruit',
-    'Se lever pour saluer chaque personne qui entre dans la pièce',
-    'Terminer chaque réunion par une phrase motivante inventée sur le moment',
-    'Boire son café ou son thé dans une tasse différente chaque jour',
-    'Annoncer les nouvelles importantes d\'une voix de présentateur télé',
-    'Ajouter un emoji improbable à chaque message professionnel',
-    'Ne jamais dire "non", trouver une formule alternative',
-    'Donner un surnom affectueux à un objet du bureau',
-    'Esquisser un pas de danse discret après une réunion productive',
-    'Toujours dire "excellente question" avant de répondre à une question',
-    'Écrire sa liste de tâches du jour en rimes',
-    'Proposer un "mot de la semaine" à toute l\'équipe',
-    'Garder le dos droit toute la journée, sans jamais s\'appuyer au dossier',
-    'Faire un clin d\'œil discret après chaque bonne nouvelle partagée',
-    'Arriver chaque matin avec une anecdote insolite',
-    'Parler avec des gestes exagérés façon présentateur',
-    'N\'utiliser que des post-it d\'une seule couleur inhabituelle',
-    'Proposer systématiquement de partager son écran, même sans besoin',
-    'Appeler la pause déjeuner "la cérémonie de midi"',
-    'Garder son clavier parfaitement aligné avec son écran toute la journée',
-    'Ne jamais dire simplement merci, toujours préciser pourquoi',
-    'Fredonner discrètement en marchant dans les couloirs',
-    'Prendre toutes ses notes à la main, jamais à l\'écran',
-    'Complimenter la tenue vestimentaire d\'un collègue une fois par jour',
-    'Ne jamais refuser une pause-café improvisée',
-    'Garder un objet porte-bonheur bien visible sur son bureau',
-    'Toujours proposer son aide avant qu\'on la demande',
-    'Changer de signature d\'e-mail chaque jour',
-    'Appeler le café "la cérémonie du café"',
-    'Faire une petite révérence discrète en quittant une réunion',
-    'Marquer un silence de cinq secondes avant de répondre à une question difficile',
-    'Choisir un animal totem pour la journée',
-    'Ne jamais consulter son téléphone en marchant dans les couloirs',
-    'Laisser un mot d\'encouragement à quelqu\'un qui semble stressé',
-    'Toujours ranger sa chaise en partant, même pour cinq minutes',
-    'Commenter la météo de façon exagérément dramatique',
-    'Ne jamais dire "ça va", inventer une réponse originale à chaque fois',
-    'Offrir une friandise à un collègue au hasard',
-    'Se déplacer toute la journée avec un carnet, utilisé ou non',
-    'Dire au revoir individuellement à chaque personne en partant',
-    'Lever la main façon écolier avant de parler en réunion',
-    'Proposer une pause étirement collective pendant une réunion longue',
-    'Écrire un haïku sur sa journée avant de partir',
-    'Toujours proposer de partager l\'ascenseur plutôt que d\'y monter seul',
-    'Résumer chaque réunion en une phrase drôle à la fin',
-    'Ranger son bureau façon minimaliste avant de partir',
-    'Remplacer "je suis débordé" par "je jongle activement"',
-    'Faire un compliment collectif à toute l\'équipe une fois par semaine',
-    'N\'écrire qu\'au stylo à plume, même sur un post-it',
-    'Boire son café debout face à la fenêtre plutôt qu\'assis',
-    'Adopter une posture de super-héros avant une réunion importante',
-    'Répondre "à vos ordres" avec humour en acceptant une tâche',
-    'Ne jamais partir sans avoir dit une phrase positive à quelqu\'un',
-    'Proposer un quiz éclair improvisé pendant une pause',
-    'Noter une réussite du jour avant de partir, même minime',
-    'Terminer chaque phrase importante par "et c\'est officiel"'
+    { text: 'Râler pour un oui ou un non', cat: 'verbal' },
+    { text: 'Souffler bruyamment entre deux tâches', cat: 'attitude' },
+    { text: "Déplacer discrètement les objets d'un collègue", cat: 'discret' },
+    { text: 'Mot interdit', cat: 'verbal' },
+    { text: 'Mot obligatoire à glisser dans une phrase', cat: 'verbal' },
+    { text: 'Complimenter chaque collègue croisé', cat: 'social' },
+    { text: 'Ne jamais dire "OK", trouver une autre formule', cat: 'verbal' },
+    { text: 'Répondre à une question par une autre question', cat: 'verbal' },
+    { text: 'Dire "excellente remarque" avant de répondre à quelqu\'un', cat: 'verbal' },
+    { text: 'Utiliser un surnom pour tout le monde', cat: 'social' },
+    { text: 'Applaudir discrètement après chaque appel ou réunion', cat: 'discret' },
+    { text: 'Chuchoter une phrase sur trois', cat: 'verbal' },
+    { text: 'Changer de stylo à chaque nouvelle note', cat: 'rituel' },
+    { text: 'Proposer un café à quelqu\'un sans qu\'on demande', cat: 'social' },
+    { text: 'Marcher à petits pas pressés en toute circonstance', cat: 'attitude' },
+    { text: 'Terminer chaque échange par "à votre bon cœur"', cat: 'verbal' },
+    { text: 'Ranger un objet du bureau d\'un collègue façon feng shui', cat: 'discret' },
+    { text: 'Se lever et s\'étirer ostensiblement toutes les heures', cat: 'rituel' },
+    { text: 'Dire bonjour à la même personne trois fois dans la journée', cat: 'social' },
+    { text: 'Signer chaque e-mail par une citation inventée sur le moment', cat: 'ecrit' },
+    { text: 'Ne jamais s\'asseoir deux fois de suite à la même place', cat: 'rituel' },
+    { text: 'Parler avec une politesse extrême, façon lettre du XIXe siècle', cat: 'verbal' },
+    { text: 'Répondre "avec grand plaisir" à toute demande', cat: 'verbal' },
+    { text: 'Prendre ses notes uniquement sous forme de dessins', cat: 'ecrit' },
+    { text: 'Parler de soi à la troisième personne une fois par jour', cat: 'verbal' },
+    { text: 'Prendre systématiquement les escaliers en chantonnant', cat: 'attitude' },
+    { text: 'Remercier l\'imprimante à voix haute après chaque impression', cat: 'attitude' },
+    { text: 'Réorganiser discrètement son bureau différemment chaque matin', cat: 'discret' },
+    { text: 'Répondre au téléphone avec un nom de code inventé', cat: 'verbal' },
+    { text: 'Proposer un "brainstorm" même pour les décisions les plus anodines', cat: 'social' },
+    { text: 'Remplacer un mot courant du bureau par un synonyme rare', cat: 'verbal' },
+    { text: 'Faire un compliment sincère à un collègue qu\'on connaît peu', cat: 'social' },
+    { text: 'Ranger son bureau à la même minute précise chaque jour', cat: 'rituel' },
+    { text: 'Ne jamais dire "je ne sais pas", inventer une réponse', cat: 'verbal' },
+    { text: 'Saluer la plante verte du bureau en arrivant', cat: 'attitude' },
+    { text: 'Toujours dire "roger" au lieu de "d\'accord"', cat: 'verbal' },
+    { text: 'Parler uniquement par questions pendant une réunion entière', cat: 'verbal' },
+    { text: 'Se présenter à un collègue comme si c\'était la première fois', cat: 'social' },
+    { text: 'Écrire une phrase du jour sur un post-it affiché discrètement', cat: 'ecrit' },
+    { text: 'Ne jamais refuser un "santé" virtuel en visioconférence', cat: 'social' },
+    { text: 'Adopter un léger accent différent chaque jour de la semaine', cat: 'attitude' },
+    { text: 'Faire une remarque "gratitude" avant chaque réunion', cat: 'verbal' },
+    { text: 'Remplacer le mot "problème" par "opportunité" toute la journée', cat: 'verbal' },
+    { text: 'Glisser un jeu de mots dans chaque e-mail envoyé', cat: 'ecrit' },
+    { text: 'Applaudir silencieusement une bonne nouvelle, sans bruit', cat: 'discret' },
+    { text: 'Se lever pour saluer chaque personne qui entre dans la pièce', cat: 'social' },
+    { text: 'Terminer chaque réunion par une phrase motivante inventée sur le moment', cat: 'verbal' },
+    { text: 'Boire son café ou son thé dans une tasse différente chaque jour', cat: 'rituel' },
+    { text: 'Annoncer les nouvelles importantes d\'une voix de présentateur télé', cat: 'attitude' },
+    { text: 'Ajouter un emoji improbable à chaque message professionnel', cat: 'ecrit' },
+    { text: 'Ne jamais dire "non", trouver une formule alternative', cat: 'verbal' },
+    { text: 'Donner un surnom affectueux à un objet du bureau', cat: 'social' },
+    { text: 'Esquisser un pas de danse discret après une réunion productive', cat: 'discret' },
+    { text: 'Toujours dire "excellente question" avant de répondre à une question', cat: 'verbal' },
+    { text: 'Écrire sa liste de tâches du jour en rimes', cat: 'ecrit' },
+    { text: 'Proposer un "mot de la semaine" à toute l\'équipe', cat: 'social' },
+    { text: 'Garder le dos droit toute la journée, sans jamais s\'appuyer au dossier', cat: 'attitude' },
+    { text: 'Faire un clin d\'œil discret après chaque bonne nouvelle partagée', cat: 'discret' },
+    { text: 'Arriver chaque matin avec une anecdote insolite', cat: 'social' },
+    { text: 'Parler avec des gestes exagérés façon présentateur', cat: 'attitude' },
+    { text: 'N\'utiliser que des post-it d\'une seule couleur inhabituelle', cat: 'rituel' },
+    { text: 'Proposer systématiquement de partager son écran, même sans besoin', cat: 'social' },
+    { text: 'Appeler la pause déjeuner "la cérémonie de midi"', cat: 'verbal' },
+    { text: 'Garder son clavier parfaitement aligné avec son écran toute la journée', cat: 'rituel' },
+    { text: 'Ne jamais dire simplement merci, toujours préciser pourquoi', cat: 'verbal' },
+    { text: 'Fredonner discrètement en marchant dans les couloirs', cat: 'discret' },
+    { text: 'Prendre toutes ses notes à la main, jamais à l\'écran', cat: 'ecrit' },
+    { text: 'Complimenter la tenue vestimentaire d\'un collègue une fois par jour', cat: 'social' },
+    { text: 'Ne jamais refuser une pause-café improvisée', cat: 'social' },
+    { text: 'Garder un objet porte-bonheur bien visible sur son bureau', cat: 'rituel' },
+    { text: 'Toujours proposer son aide avant qu\'on la demande', cat: 'social' },
+    { text: 'Changer de signature d\'e-mail chaque jour', cat: 'ecrit' },
+    { text: 'Appeler le café "la cérémonie du café"', cat: 'verbal' },
+    { text: 'Faire une petite révérence discrète en quittant une réunion', cat: 'discret' },
+    { text: 'Marquer un silence de cinq secondes avant de répondre à une question difficile', cat: 'attitude' },
+    { text: 'Choisir un animal totem pour la journée', cat: 'attitude' },
+    { text: 'Ne jamais consulter son téléphone en marchant dans les couloirs', cat: 'rituel' },
+    { text: 'Laisser un mot d\'encouragement à quelqu\'un qui semble stressé', cat: 'social' },
+    { text: 'Toujours ranger sa chaise en partant, même pour cinq minutes', cat: 'rituel' },
+    { text: 'Commenter la météo de façon exagérément dramatique', cat: 'attitude' },
+    { text: 'Ne jamais dire "ça va", inventer une réponse originale à chaque fois', cat: 'verbal' },
+    { text: 'Offrir une friandise à un collègue au hasard', cat: 'social' },
+    { text: 'Se déplacer toute la journée avec un carnet, utilisé ou non', cat: 'rituel' },
+    { text: 'Dire au revoir individuellement à chaque personne en partant', cat: 'social' },
+    { text: 'Lever la main façon écolier avant de parler en réunion', cat: 'attitude' },
+    { text: 'Proposer une pause étirement collective pendant une réunion longue', cat: 'social' },
+    { text: 'Écrire un haïku sur sa journée avant de partir', cat: 'ecrit' },
+    { text: 'Toujours proposer de partager l\'ascenseur plutôt que d\'y monter seul', cat: 'social' },
+    { text: 'Résumer chaque réunion en une phrase drôle à la fin', cat: 'verbal' },
+    { text: 'Ranger son bureau façon minimaliste avant de partir', cat: 'rituel' },
+    { text: 'Remplacer "je suis débordé" par "je jongle activement"', cat: 'verbal' },
+    { text: 'Faire un compliment collectif à toute l\'équipe une fois par semaine', cat: 'social' },
+    { text: 'N\'écrire qu\'au stylo à plume, même sur un post-it', cat: 'ecrit' },
+    { text: 'Boire son café debout face à la fenêtre plutôt qu\'assis', cat: 'rituel' },
+    { text: 'Adopter une posture de super-héros avant une réunion importante', cat: 'attitude' },
+    { text: 'Répondre "à vos ordres" avec humour en acceptant une tâche', cat: 'verbal' },
+    { text: 'Ne jamais partir sans avoir dit une phrase positive à quelqu\'un', cat: 'social' },
+    { text: 'Proposer un quiz éclair improvisé pendant une pause', cat: 'social' },
+    { text: 'Noter une réussite du jour avant de partir, même minime', cat: 'ecrit' },
+    { text: 'Terminer chaque phrase importante par "et c\'est officiel"', cat: 'verbal' }
   ]
 };
 
@@ -205,10 +214,11 @@ function currentWeekLabel(){
 }
 
 /* ---------------- App state (in-memory mirror of Firestore) ---------------- */
-let state = { defis: [], people: [], week: null, historyCount: 0, messages: [] };
+let state = { defis: [], people: [], week: null, historyCount: 0, history: [], messages: [] };
 let myName = null;
 let myUid = null;
 let currentPage = 'semaine';
+let suggestionFilter = null;
 let unsubList = [];
 let defisReady = false, peopleReady = false, weekInitInProgress = false;
 
@@ -262,15 +272,36 @@ function ensureWeekShape(week, people){
   });
 }
 
-function assignRandomly(){
+// previousAssignments (personne → id du défi de la semaine précédente) permet
+// d'éviter qu'un tirage au sort purement aléatoire retombe deux fois de suite
+// sur le même défi pour la même personne.
+function assignRandomly(previousAssignments){
+  const prev = previousAssignments || {};
   const pool = state.defis.filter(d => !d.isMandatoryWord);
   if(pool.length === 0) return {};
   const assignments = {};
   state.people.forEach(p => {
-    const defi = pool[Math.floor(Math.random()*pool.length)];
+    const candidates = pool.length > 1 ? pool.filter(d => d.id !== prev[p]) : pool;
+    const options = candidates.length ? candidates : pool;
+    const defi = options[Math.floor(Math.random()*options.length)];
     assignments[p] = defi.id;
   });
   return assignments;
+}
+
+// Archive la semaine en cours (si elle existe) dans l'historique puis en
+// démarre une nouvelle, en évitant de réassigner le même défi que la semaine
+// qui vient de se terminer. Utilisé à la fois par le bouton "Nouvelle
+// semaine" et par le basculement automatique de semaine (initData) pour ne
+// pas dupliquer cette logique à deux endroits.
+async function advanceToNewWeek(tx, { onlyIfStale } = {}){
+  const weekRef = docRef('week');
+  const fresh = await tx.get(weekRef);
+  const finishedWeek = fresh.exists() ? fresh.data() : null;
+  if(onlyIfStale && finishedWeek && finishedWeek.label === currentWeekLabel()) return false;
+  if(finishedWeek) tx.set(doc(historyCollection()), { ...finishedWeek, archivedAt: Date.now() });
+  tx.set(weekRef, newWeek(assignRandomly(finishedWeek ? finishedWeek.assignments : {})));
+  return true;
 }
 
 function defiById(id){ return state.defis.find(d => d.id === id); }
@@ -316,6 +347,23 @@ function resolveDay(day, person, dayIdx, weekLabel){
 function successCount(person){
   const c = (state.week && state.week.checks[person]) || [];
   return c.filter(d => d.status === 'validated').length;
+}
+
+// Classement toutes semaines confondues (archivées + semaine en cours), pour
+// donner un aspect un peu plus ludique/compétitif à l'appli au-delà de la
+// seule semaine affichée.
+function leaderboard(){
+  const totals = {};
+  const bump = (person, n) => { if(n) totals[person] = (totals[person] || 0) + n; };
+  const weeks = state.week ? [...state.history, state.week] : state.history;
+  weeks.forEach(week => {
+    Object.entries(week.checks || {}).forEach(([person, days]) => {
+      bump(person, (days || []).filter(d => d && d.status === 'validated').length);
+    });
+  });
+  return Object.entries(totals)
+    .map(([person, count]) => ({ person, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 function pendingItemsNeedingMyVote(){
@@ -395,7 +443,8 @@ async function addPersonCore(name){
     people.push(name);
     const week = weekSnap.exists() ? weekSnap.data() : newWeek({});
     ensureWeekShape(week, people);
-    if(state.defis.length) week.assignments[name] = state.defis[Math.floor(Math.random()*state.defis.length)].id;
+    const pool = state.defis.filter(d => !d.isMandatoryWord);
+    if(pool.length) week.assignments[name] = pool[Math.floor(Math.random()*pool.length)].id;
     tx.set(peopleRef, { list: people });
     tx.set(weekRef, week);
   });
@@ -630,18 +679,13 @@ async function initData(){
     } else if(!weekInitInProgress){
       weekInitInProgress = true;
       try{
-        await runTransaction(db, async tx => {
-          const ref = docRef('week');
-          const fresh = await tx.get(ref);
-          if(!fresh.exists() || fresh.data().label !== currentWeekLabel()){
-            tx.set(ref, newWeek(assignRandomly()));
-          }
-        });
+        await runTransaction(db, tx => advanceToNewWeek(tx, { onlyIfStale: true }));
       } finally { weekInitInProgress = false; }
     }
   }));
   unsubList.push(onSnapshot(historyCollection(), snap => {
     state.historyCount = snap.size;
+    state.history = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderApp();
   }));
   unsubList.push(onSnapshot(query(chatCollection(), orderBy('createdAt', 'asc'), limit(100)), snap => {
@@ -698,7 +742,7 @@ function changeTeam(){
   clearSavedTeamCode();
   teamCode = null;
   myName = null;
-  state = { defis: [], people: [], week: null, historyCount: 0, messages: [] };
+  state = { defis: [], people: [], week: null, historyCount: 0, history: [], messages: [] };
   currentPage = 'semaine';
   showTeamScreen();
 }
@@ -761,6 +805,7 @@ function render(){
       <button class="tab-btn ${currentPage==='defis'?'active':''}" data-page="defis">📌 Défis</button>
       <button class="tab-btn ${currentPage==='valider'?'active':''}" data-page="valider">🔔 À valider ${pendingCount ? `<span class="tab-badge">${pendingCount}</span>` : ''}</button>
       <button class="tab-btn ${currentPage==='semaine'?'active':''}" data-page="semaine">🗓️ Semaine</button>
+      <button class="tab-btn ${currentPage==='classement'?'active':''}" data-page="classement">🏆 Classement</button>
       <button class="tab-btn ${currentPage==='discussion'?'active':''}" data-page="discussion">💬 Discussion</button>
       <button class="tab-btn ${currentPage==='parametres'?'active':''}" data-page="parametres">⚙️ Paramètres</button>
     </div>
@@ -778,6 +823,7 @@ function render(){
           <p class="panel-title" style="margin:0;">💡 Idées de défis bureau</p>
           <button class="btn ghost small" id="addAllBtn">Tout ajouter</button>
         </div>
+        <div class="cat-filters" id="catFilters"></div>
         <div class="suggest-list" id="suggestList"></div>
       </div>
     </section>
@@ -809,6 +855,14 @@ function render(){
         <input id="newPersonInput" placeholder="Ajouter une personne…" />
         <button class="btn small" id="addPersonBtn">Ajouter</button>
       </div>
+    </section>
+
+    <section class="page ${currentPage==='classement'?'active':''}" id="page-classement">
+      <p class="panel-title">🏆 Classement</p>
+      <p style="font-family:'Quicksand'; font-size:0.8rem; color:var(--ink-soft); margin:0 0 14px;">
+        Défis réussis, toutes semaines confondues (${state.historyCount} archivée${state.historyCount>1?'s':''} + la semaine en cours).
+      </p>
+      <div id="leaderboardList"></div>
     </section>
 
     <section class="page ${currentPage==='discussion'?'active':''}" id="page-discussion">
@@ -886,8 +940,10 @@ function render(){
 
   renderPad();
   renderPeople();
+  renderCatFilters();
   renderSuggestions();
   renderPending();
+  renderLeaderboard();
   renderChat();
   renderAdminPeopleList();
   wireGlobalEvents();
@@ -944,16 +1000,36 @@ function renderChat(){
   el.scrollTop = el.scrollHeight;
 }
 
+function renderCatFilters(){
+  const el = document.getElementById('catFilters');
+  if(!el) return;
+  const pills = [
+    `<button class="cat-pill ${suggestionFilter===null?'active':''}" data-cat="">Tous</button>`,
+    ...Object.entries(CATEGORIES).map(([id, c]) =>
+      `<button class="cat-pill ${suggestionFilter===id?'active':''}" data-cat="${id}">${c.emoji} ${c.label}</button>`)
+  ];
+  el.innerHTML = pills.join('');
+  el.querySelectorAll('.cat-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      suggestionFilter = btn.dataset.cat || null;
+      renderCatFilters();
+      renderSuggestions();
+    });
+  });
+}
+
 function renderSuggestions(){
   const list = document.getElementById('suggestList');
-  const pool = SUGGESTIONS.colleagues;
+  const pool = suggestionFilter
+    ? SUGGESTIONS.colleagues.filter(s => s.cat === suggestionFilter)
+    : SUGGESTIONS.colleagues;
   const existingNames = state.defis.map(d => normalize(d.name));
   list.innerHTML = '';
-  pool.forEach(text => {
+  pool.forEach(({ text, cat }) => {
     const already = existingNames.includes(normalize(text));
     const item = document.createElement('div');
     item.className = 'suggest-item' + (already ? ' added' : '');
-    item.innerHTML = `<span>${escapeAttr(text)}</span><button ${already?'disabled':''} data-text="${escapeAttr(text)}">${already ? '✓' : '＋'}</button>`;
+    item.innerHTML = `<span>${CATEGORIES[cat].emoji} ${escapeAttr(text)}</span><button ${already?'disabled':''} data-text="${escapeAttr(text)}">${already ? '✓' : '＋'}</button>`;
     list.appendChild(item);
   });
   list.querySelectorAll('button:not([disabled])').forEach(btn => {
@@ -967,7 +1043,7 @@ function renderSuggestions(){
   document.getElementById('addAllBtn').addEventListener('click', async () => {
     try{
       await updateDefis(defis => {
-        SUGGESTIONS.colleagues.forEach(text => {
+        SUGGESTIONS.colleagues.forEach(({ text }) => {
           if(!defis.some(d => normalize(d.name) === normalize(text))){
             const needsWord = /interdit|obligatoire/i.test(text);
             defis.push({ id: genId(), name: text, ...(needsWord ? { word:'' } : {}) });
@@ -1229,25 +1305,35 @@ function renderPending(){
   });
 }
 
+const RANK_MEDALS = ['🥇','🥈','🥉'];
+function renderLeaderboard(){
+  const el = document.getElementById('leaderboardList');
+  if(!el) return;
+  const ranking = leaderboard();
+  if(ranking.length === 0){
+    el.innerHTML = `<div class="pending-empty">Pas encore de défi réussi — ça viendra ✨</div>`;
+    return;
+  }
+  el.innerHTML = ranking.map((row, i) => `
+    <div class="pending-row">
+      <div class="pr-text">${RANK_MEDALS[i] || `#${i+1}`} <b>${escapeAttr(row.person)}</b></div>
+      <div class="pr-votes">${row.count} défi${row.count>1?'s':''} réussi${row.count>1?'s':''}</div>
+    </div>
+  `).join('');
+}
+
 function wireGlobalEvents(){
   const chatForm = document.getElementById('chatForm');
   if(chatForm) chatForm.addEventListener('submit', sendChatMessage);
   document.getElementById('shuffleBtn').addEventListener('click', async () => {
     try{
-      await updateWeek(week => { week.assignments = assignRandomly(); });
+      await updateWeek(week => { week.assignments = assignRandomly(week.assignments); });
       showToast('Défis répartis 🎲');
     }catch(err){ showErrorToast(err); }
   });
   document.getElementById('newWeekBtn').addEventListener('click', async () => {
     try{
-      await runTransaction(db, async tx => {
-        const weekRef = docRef('week');
-        const weekSnap = await tx.get(weekRef);
-        const finishedWeek = weekSnap.exists() ? weekSnap.data() : null;
-        const nextWeek = newWeek(assignRandomly());
-        if(finishedWeek) tx.set(doc(historyCollection()), { ...finishedWeek, archivedAt: Date.now() });
-        tx.set(weekRef, nextWeek);
-      });
+      await runTransaction(db, tx => advanceToNewWeek(tx));
       showToast('Nouvelle semaine lancée 📅');
     }catch(err){ showErrorToast(err); }
   });
