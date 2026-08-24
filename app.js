@@ -263,8 +263,8 @@ function ensureWeekShape(week, people){
 }
 
 function assignRandomly(){
-  if(state.defis.length === 0) return {};
-  const pool = [...state.defis];
+  const pool = state.defis.filter(d => !d.isMandatoryWord);
+  if(pool.length === 0) return {};
   const assignments = {};
   state.people.forEach(p => {
     const defi = pool[Math.floor(Math.random()*pool.length)];
@@ -991,7 +991,7 @@ async function addDefiFromText(text){
 function renderPad(){
   const pad = document.getElementById('pad');
   pad.innerHTML = '';
-  state.defis.forEach(d => {
+  state.defis.filter(d => !d.isMandatoryWord).forEach(d => {
     const row = document.createElement('div');
     row.className = 'defi-row';
     const needsWord = /interdit|obligatoire/i.test(d.name);
