@@ -240,11 +240,13 @@ function normalizeDay(raw){
   return { status: raw ? 'validated' : 'none', votes: {} };
 }
 
-function newWeek(assignments){
+function blankWeekFor(people, assignments){
   const checks = {};
-  state.people.forEach(p => checks[p] = new Array(getDays().length).fill(null).map(blankDay));
+  people.forEach(p => checks[p] = new Array(getDays().length).fill(null).map(blankDay));
   return { label: currentWeekLabel(), assignments: assignments || {}, checks };
 }
+
+function newWeek(assignments){ return blankWeekFor(state.people, assignments); }
 
 // Normalise la forme d'un objet "week" pour une liste de personnes donnée.
 // Prend people en paramètre (plutôt que state.people) car cette fonction est
@@ -413,6 +415,75 @@ async function removePerson(person){
     tx.set(peopleRef, { list: people });
     tx.set(weekRef, week);
   });
+}
+
+// Fusionne l'équipe courante dans une équipe cible : chaque collègue qui a
+// créé sa propre équipe par erreur (au lieu de rejoindre celle des autres)
+// peut ainsi rejoindre le bon groupe sans perdre ses défis/personnes/historique
+// — tout est reversé dans l'équipe cible, rien n'est supprimé de l'équipe
+// d'origine (au cas où d'autres collègues s'y trouvent encore).
+async function mergeIntoTeam(targetCode){
+  targetCode = targetCode.trim().toUpperCase();
+  if(!targetCode) return;
+  if(targetCode === teamCode) throw new Error('Tu es déjà dans cette équipe.');
+
+  const sourceRoot = teamRoot();
+  const targetRoot = doc(db, APP_NS + '_teams', targetCode);
+  const targetDocRef = name => doc(collection(targetRoot, 'state'), name);
+
+  const [sourcePeopleSnap, sourceDefisSnap, sourceHistorySnap, sourceChatSnap] = await Promise.all([
+    getDoc(docRef('people')),
+    getDoc(docRef('defis')),
+    getDocs(historyCollection()),
+    getDocs(chatCollection())
+  ]);
+  const sourcePeople = (sourcePeopleSnap.exists() && sourcePeopleSnap.data().list) || [];
+  const sourceDefis = (sourceDefisSnap.exists() && sourceDefisSnap.data().list) || [];
+
+  await runTransaction(db, async tx => {
+    const targetPeopleRef = targetDocRef('people');
+    const targetDefisRef = targetDocRef('defis');
+    const targetWeekRef = targetDocRef('week');
+    const [targetPeopleSnap, targetDefisSnap, targetWeekSnap] = await Promise.all([
+      tx.get(targetPeopleRef), tx.get(targetDefisRef), tx.get(targetWeekRef)
+    ]);
+
+    const mergedPeople = (targetPeopleSnap.exists() && targetPeopleSnap.data().list) || [];
+    sourcePeople.forEach(p => { if(!mergedPeople.includes(p)) mergedPeople.push(p); });
+
+    const mergedDefis = (targetDefisSnap.exists() && targetDefisSnap.data().list) || [];
+    sourceDefis.forEach(d => {
+      if(!mergedDefis.some(x => normalize(x.name) === normalize(d.name))){
+        mergedDefis.push({ ...d, id: genId() });
+      }
+    });
+
+    const week = targetWeekSnap.exists() ? targetWeekSnap.data() : blankWeekFor(mergedPeople, {});
+    ensureWeekShape(week, mergedPeople);
+    sourcePeople.forEach(p => {
+      if(!week.assignments[p] && mergedDefis.length){
+        week.assignments[p] = mergedDefis[Math.floor(Math.random()*mergedDefis.length)].id;
+      }
+    });
+
+    tx.set(targetPeopleRef, { list: mergedPeople });
+    tx.set(targetDefisRef, { list: mergedDefis });
+    tx.set(targetWeekRef, week);
+  });
+
+  // Historique et discussion : simples copies, pas besoin de transaction
+  // (ce sont des collections à documents indépendants, pas des documents
+  // uniques partagés qu'une écriture concurrente pourrait corrompre).
+  await Promise.all([
+    ...sourceHistorySnap.docs.map(d => setDoc(doc(collection(targetRoot, 'history')), d.data())),
+    ...sourceChatSnap.docs.map(d => setDoc(doc(collection(targetRoot, 'chat')), d.data()))
+  ]);
+
+  detachAll();
+  saveTeamCode(targetCode);
+  teamCode = targetCode;
+  myName = null;
+  await bootTeamData();
 }
 
 /* ---------------- Toasts & notifications ---------------- */
@@ -771,6 +842,19 @@ function render(){
       </div>
 
       <div class="suggest-panel">
+        <p class="panel-title" style="margin:0 0 10px;">🔀 Rejoindre une autre équipe</p>
+        <p style="font-family:'Quicksand'; font-size:0.85rem; margin:0 0 12px;">
+          Si un collègue a créé sa propre équipe par erreur, entre son code ici :
+          vos personnes, défis, semaine, historique et discussion seront fusionnés
+          dans cette équipe-là (rien n'est supprimé ici).
+        </p>
+        <div class="add-person" style="max-width:none;">
+          <input id="mergeTeamInput" placeholder="Code de l'équipe à rejoindre" style="text-transform:uppercase;" />
+          <button class="btn small" id="mergeTeamBtn">Fusionner</button>
+        </div>
+      </div>
+
+      <div class="suggest-panel">
         <p class="panel-title" style="margin:0 0 10px;">🔔 Notifications</p>
         <p style="font-family:'Quicksand'; font-size:0.9rem; margin:0 0 12px;">${notificationStatusLabel()}</p>
         <button class="btn small" id="settingsNotifBtn">Activer les notifications</button>
@@ -815,6 +899,19 @@ function render(){
   });
   document.getElementById('settingsChangeTeamBtn').addEventListener('click', () => {
     if(confirm('Quitter cette équipe et en choisir/créer une autre ?')) changeTeam();
+  });
+  document.getElementById('mergeTeamBtn').addEventListener('click', async () => {
+    const input = document.getElementById('mergeTeamInput');
+    const target = input.value.trim().toUpperCase();
+    if(!target) return;
+    if(!confirm(`Fusionner cette équipe ("${teamCode}") dans l'équipe "${target}" ? Personnes, défis, semaine, historique et discussion seront copiés dans "${target}". Tu basculeras ensuite sur cette équipe.`)) return;
+    try{
+      await mergeIntoTeam(target);
+      showToast(`Équipes fusionnées — tu es maintenant dans "${target}" 🔀`);
+    }catch(err){
+      if(err && err.message === 'Tu es déjà dans cette équipe.') showToast(err.message);
+      else showErrorToast(err);
+    }
   });
   document.getElementById('settingsNotifBtn').addEventListener('click', async () => {
     if(!('Notification' in window)){ showToast('Notifications non supportées sur ce navigateur.'); return; }
