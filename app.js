@@ -238,8 +238,24 @@ let prevPendingKeys = new Set();
 /* ---------------- Week / day domain logic ---------------- */
 function blankDay(){ return { status: 'none', votes: {} }; }
 function normalizeDay(raw){
-  if(raw && typeof raw === 'object' && 'status' in raw) return { status: raw.status, votes: raw.votes || {}, tieBreak: !!raw.tieBreak };
+  if(raw && typeof raw === 'object' && 'status' in raw){
+    return {
+      status: raw.status,
+      votes: raw.votes || {},
+      tieBreak: !!raw.tieBreak,
+      ...(Number.isFinite(raw.completedAt) ? { completedAt: raw.completedAt } : {})
+    };
+  }
   return { status: raw ? 'validated' : 'none', votes: {} };
+}
+
+function setDayStatus(day, status){
+  day.status = status;
+  if(status === 'validated'){
+    if(!day.completedAt) day.completedAt = Date.now();
+  } else {
+    delete day.completedAt;
+  }
 }
 
 function newWeek(assignments){
@@ -304,11 +320,11 @@ function resolveDay(day, person, dayIdx, weekLabel){
   const no = votes.filter(v => v === 'no').length;
   const total = eligibleVoters(person);
   const threshold = majorityThreshold(person);
-  if(threshold === 0){ day.status = 'validated'; return; }
-  if(yes >= threshold){ day.status = 'validated'; return; }
-  if(no >= threshold){ day.status = 'rejected'; return; }
+  if(threshold === 0){ setDayStatus(day, 'validated'); return; }
+  if(yes >= threshold){ setDayStatus(day, 'validated'); return; }
+  if(no >= threshold){ setDayStatus(day, 'rejected'); return; }
   if(yes + no >= total && yes === no){
-    day.status = tieBreakResult(person, dayIdx, weekLabel);
+    setDayStatus(day, tieBreakResult(person, dayIdx, weekLabel));
     day.tieBreak = true;
   }
 }
@@ -316,6 +332,51 @@ function resolveDay(day, person, dayIdx, weekLabel){
 function successCount(person){
   const c = (state.week && state.week.checks[person]) || [];
   return c.filter(d => d.status === 'validated').length;
+}
+
+const PODIUM_MEDALS = ['🥇','🥈','🥉'];
+
+function completedAtFor(day){
+  return Number.isFinite(day && day.completedAt) ? day.completedAt : Number.MAX_SAFE_INTEGER;
+}
+
+function dayPodium(dayIdx){
+  return state.people
+    .map(person => ({ person, day: getDayState(person, dayIdx) }))
+    .filter(row => row.day.status === 'validated')
+    .sort((a, b) =>
+      completedAtFor(a.day) - completedAtFor(b.day) ||
+      a.person.localeCompare(b.person)
+    )
+    .slice(0, 3);
+}
+
+function dailyRankFor(person, dayIdx){
+  const i = dayPodium(dayIdx).findIndex(row => row.person === person);
+  return i >= 0 ? i + 1 : null;
+}
+
+function weeklyPodium(){
+  const dayCount = getDays().length;
+  return state.people
+    .map(person => {
+      const checks = (state.week && state.week.checks[person]) || [];
+      const validated = checks.filter(day => day.status === 'validated');
+      const lastCompletedAt = validated.reduce((latest, day) => Math.max(latest, Number.isFinite(day.completedAt) ? day.completedAt : 0), 0);
+      return { person, score: validated.length, total: dayCount, lastCompletedAt };
+    })
+    .filter(row => row.score > 0)
+    .sort((a, b) =>
+      b.score - a.score ||
+      (a.lastCompletedAt || Number.MAX_SAFE_INTEGER) - (b.lastCompletedAt || Number.MAX_SAFE_INTEGER) ||
+      a.person.localeCompare(b.person)
+    )
+    .slice(0, 3);
+}
+
+function formatCompletedAt(ts){
+  if(!Number.isFinite(ts) || ts === Number.MAX_SAFE_INTEGER) return 'validé';
+  return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function pendingItemsNeedingMyVote(){
@@ -729,6 +790,7 @@ function render(){
       <button class="tab-btn ${currentPage==='defis'?'active':''}" data-page="defis">📌 Défis</button>
       <button class="tab-btn ${currentPage==='valider'?'active':''}" data-page="valider">🔔 À valider ${pendingCount ? `<span class="tab-badge">${pendingCount}</span>` : ''}</button>
       <button class="tab-btn ${currentPage==='semaine'?'active':''}" data-page="semaine">🗓️ Semaine</button>
+      <button class="tab-btn ${currentPage==='podiums'?'active':''}" data-page="podiums">🏆 Podiums</button>
       <button class="tab-btn ${currentPage==='discussion'?'active':''}" data-page="discussion">💬 Discussion</button>
       <button class="tab-btn ${currentPage==='parametres'?'active':''}" data-page="parametres">⚙️ Paramètres</button>
     </div>
@@ -776,6 +838,25 @@ function render(){
       <div class="add-person">
         <input id="newPersonInput" placeholder="Ajouter une personne…" />
         <button class="btn small" id="addPersonBtn">Ajouter</button>
+      </div>
+    </section>
+
+    <section class="page ${currentPage==='podiums'?'active':''}" id="page-podiums">
+      <div class="podium-layout">
+        <div class="podium-panel weekly-podium">
+          <div class="podium-head">
+            <h2>🏆 Podium de la semaine</h2>
+            <span class="week-label">${state.week.label}</span>
+          </div>
+          <div id="weeklyPodiumList"></div>
+        </div>
+        <div class="podium-panel">
+          <div class="podium-head">
+            <h2>📅 Podiums journaliers</h2>
+            <span class="week-label">Lun → Ven</span>
+          </div>
+          <div class="daily-podium-grid" id="dailyPodiumGrid"></div>
+        </div>
       </div>
     </section>
 
@@ -843,6 +924,7 @@ function render(){
   renderPeople();
   renderSuggestions();
   renderPending();
+  renderPodiums();
   renderChat();
   renderAdminPeopleList();
   wireGlobalEvents();
@@ -1029,10 +1111,12 @@ function renderPeople(){
           else if(dayState.status === 'rejected') icon = dayState.tieBreak ? '🎲💔' : '💔';
           else if(isPending) icon = '⏳';
           const canVoteHere = isPending && myName && myName !== person && !(myName in dayState.votes);
+          const dailyRank = dailyRankFor(person, di);
           return `
           <label class="${isPending ? 'is-pending' : ''}">
             <span class="heart" data-person="${escapeAttr(person)}" data-day="${di}">${icon}</span>
             ${day}
+            ${dailyRank ? `<span class="day-rank" title="Rang du jour">${PODIUM_MEDALS[dailyRank - 1]}</span>` : ''}
             ${isPending ? `<span class="day-mini-votes">${yes}👍/${no}👎</span>` : ''}
             ${canVoteHere ? `<button class="mini-vote-btn yes" data-person="${escapeAttr(person)}" data-day="${di}" data-v="yes">👍</button><button class="mini-vote-btn no" data-person="${escapeAttr(person)}" data-day="${di}" data-v="no">👎</button>` : ''}
           </label>
@@ -1102,11 +1186,11 @@ async function onHeartClick(person, dayIdx){
     const newStatus = await updateWeek(week => {
       const day = week.checks[person][dayIdx];
       if(day.status === 'none'){
-        day.status = eligibleVoters(person) === 0 ? 'validated' : 'pending';
+        setDayStatus(day, eligibleVoters(person) === 0 ? 'validated' : 'pending');
         day.votes = {};
         delete day.tieBreak;
       } else if(day.status !== 'none' && person === myName){
-        day.status = 'none';
+        setDayStatus(day, 'none');
         day.votes = {};
         delete day.tieBreak;
       }
@@ -1169,6 +1253,42 @@ function renderPending(){
       await castVote(e.target.dataset.person, parseInt(e.target.dataset.day,10), e.target.dataset.v);
     });
   });
+}
+
+function podiumRowHtml(row, idx, meta){
+  return `
+    <div class="podium-row rank-${idx + 1}">
+      <div class="podium-medal">${PODIUM_MEDALS[idx] || `#${idx + 1}`}</div>
+      <div class="podium-person">
+        <b>${escapeAttr(row.person)}</b>
+        <span>${escapeAttr(meta)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderPodiums(){
+  const weeklyList = document.getElementById('weeklyPodiumList');
+  const dailyGrid = document.getElementById('dailyPodiumGrid');
+  if(!weeklyList || !dailyGrid) return;
+
+  const weekly = weeklyPodium();
+  weeklyList.innerHTML = weekly.length
+    ? weekly.map((row, i) => podiumRowHtml(row, i, `${row.score}/${row.total} défi${row.score > 1 ? 's' : ''} validé${row.score > 1 ? 's' : ''}`)).join('')
+    : `<div class="podium-empty">Aucun défi validé cette semaine pour l'instant.</div>`;
+
+  const days = getDays();
+  dailyGrid.innerHTML = days.map((day, dayIdx) => {
+    const rows = dayPodium(dayIdx);
+    return `
+      <div class="daily-podium-card">
+        <h3>${day}</h3>
+        ${rows.length
+          ? rows.map((row, i) => podiumRowHtml(row, i, formatCompletedAt(completedAtFor(row.day)))).join('')
+          : `<div class="podium-empty">Pas encore de validation.</div>`}
+      </div>
+    `;
+  }).join('');
 }
 
 function wireGlobalEvents(){
