@@ -16,9 +16,10 @@ service cloud.firestore {
 
     match /defisCollegues_teams/{teamCode} {
 
-      // Défis, personnes, semaine en cours — toutes les mutations passent
-      // par des transactions côté client (voir updateWeek/updateDefis/
-      // addPersonCore/removePerson dans app.js).
+      // Défis, personnes, semaine en cours et discussion (state/chat) —
+      // toutes les mutations sensibles passent par des transactions côté
+      // client (voir updateWeek/updateDefis/addPersonCore/removePerson/
+      // sendChatMessage dans app.js).
       match /state/{doc} {
         allow read, write: if request.auth != null;
       }
@@ -41,8 +42,9 @@ service cloud.firestore {
         allow read, create, delete: if request.auth != null;
       }
 
-      // Messages de la discussion d'équipe — pas de modification/suppression
-      // après envoi.
+      // Ancien emplacement des messages, conservé seulement pour compatibilité
+      // si des données existent déjà. Le code courant utilise state/chat pour
+      // éviter de dépendre d'une nouvelle règle Firestore publiée manuellement.
       match /chat/{doc} {
         allow read, create: if request.auth != null;
       }

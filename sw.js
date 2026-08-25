@@ -1,6 +1,6 @@
 const CACHE_PREFIX = 'defis-collegues-';
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
-const APP_SHELL = ['./', './index.html', './style.css', './app.js', './manifest.json'];
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
+const APP_SHELL = ['./', './index.html', './style.css?v=3', './app.js?v=3', './manifest.json'];
 
 self.addEventListener('install', event => {
   event.waitUntil(

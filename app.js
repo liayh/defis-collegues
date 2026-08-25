@@ -16,8 +16,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction,
-  addDoc, query, orderBy, limit, serverTimestamp
+  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
@@ -234,6 +233,7 @@ let defisReady = false, peopleReady = false, weekInitInProgress = false;
 const TEAM_CODE_KEY = 'defisColleguesTeamCode';
 const TEAM_CODE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O/1/I/l (ambigus)
 let teamCode = null;
+const CHAT_MAX_MESSAGES = 100;
 
 function getSavedTeamCode(){ return localStorage.getItem(TEAM_CODE_KEY); }
 function saveTeamCode(code){ localStorage.setItem(TEAM_CODE_KEY, code); }
@@ -422,7 +422,36 @@ function identityRef(uid){ return doc(collection(teamRoot(), 'identities'), uid)
 // Un document par semaine archivée plutôt qu'un unique tableau qui grossirait
 // indéfiniment (et finirait par dépasser la limite de 1 Mo par document Firestore).
 function historyCollection(){ return collection(teamRoot(), 'history'); }
-function chatCollection(){ return collection(teamRoot(), 'chat'); }
+// La discussion est stockée dans state/chat plutôt qu'une sous-collection
+// dédiée : les règles Firestore déjà en place pour l'état de l'équipe suffisent.
+function chatDocRef(){ return docRef('chat'); }
+
+function normalizeChatMessages(messages){
+  if(!Array.isArray(messages)) return [];
+  return messages
+    .filter(message => message && typeof message.text === 'string' && message.text.trim())
+    .map((message, i) => ({
+      id: String(message.id || `${message.uid || 'message'}-${message.createdAt || i}`),
+      text: String(message.text).slice(0, 500),
+      author: String(message.author || 'Collègue').slice(0, 80),
+      uid: String(message.uid || ''),
+      createdAt: Number(message.createdAt) || 0
+    }))
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-CHAT_MAX_MESSAGES);
+}
+
+function mergeChatMessages(existingMessages, incomingMessages){
+  const merged = [];
+  const seen = new Set();
+  [...normalizeChatMessages(existingMessages), ...normalizeChatMessages(incomingMessages)].forEach(message => {
+    const key = message.id || `${message.uid}-${message.createdAt}-${message.text}`;
+    if(seen.has(key)) return;
+    seen.add(key);
+    merged.push(message);
+  });
+  return normalizeChatMessages(merged);
+}
 
 async function updateWeek(mutator){
   const ref = docRef('week');
@@ -492,7 +521,6 @@ async function mergeIntoTeam(targetCode){
   if(!targetCode) return;
   if(targetCode === teamCode) throw new Error('Tu es déjà dans cette équipe.');
 
-  const sourceRoot = teamRoot();
   const targetRoot = doc(db, APP_NS + '_teams', targetCode);
   const targetDocRef = name => doc(collection(targetRoot, 'state'), name);
 
@@ -500,17 +528,19 @@ async function mergeIntoTeam(targetCode){
     getDoc(docRef('people')),
     getDoc(docRef('defis')),
     getDocs(historyCollection()),
-    getDocs(chatCollection())
+    getDoc(chatDocRef())
   ]);
   const sourcePeople = (sourcePeopleSnap.exists() && sourcePeopleSnap.data().list) || [];
   const sourceDefis = (sourceDefisSnap.exists() && sourceDefisSnap.data().list) || [];
+  const sourceMessages = normalizeChatMessages(sourceChatSnap.exists() ? sourceChatSnap.data().messages : []);
 
   await runTransaction(db, async tx => {
     const targetPeopleRef = targetDocRef('people');
     const targetDefisRef = targetDocRef('defis');
     const targetWeekRef = targetDocRef('week');
-    const [targetPeopleSnap, targetDefisSnap, targetWeekSnap] = await Promise.all([
-      tx.get(targetPeopleRef), tx.get(targetDefisRef), tx.get(targetWeekRef)
+    const targetChatRef = targetDocRef('chat');
+    const [targetPeopleSnap, targetDefisSnap, targetWeekSnap, targetChatSnap] = await Promise.all([
+      tx.get(targetPeopleRef), tx.get(targetDefisRef), tx.get(targetWeekRef), tx.get(targetChatRef)
     ]);
 
     const mergedPeople = (targetPeopleSnap.exists() && targetPeopleSnap.data().list) || [];
@@ -534,14 +564,17 @@ async function mergeIntoTeam(targetCode){
     tx.set(targetPeopleRef, { list: mergedPeople });
     tx.set(targetDefisRef, { list: mergedDefis });
     tx.set(targetWeekRef, week);
+    if(sourceMessages.length){
+      tx.set(targetChatRef, {
+        messages: mergeChatMessages(targetChatSnap.exists() ? targetChatSnap.data().messages : [], sourceMessages)
+      });
+    }
   });
 
-  // Historique et discussion : simples copies, pas besoin de transaction
-  // (ce sont des collections à documents indépendants, pas des documents
-  // uniques partagés qu'une écriture concurrente pourrait corrompre).
+  // Historique : simples copies, pas besoin de transaction (ce sont des
+  // documents indépendants, pas un document unique partagé).
   await Promise.all([
-    ...sourceHistorySnap.docs.map(d => setDoc(doc(collection(targetRoot, 'history')), d.data())),
-    ...sourceChatSnap.docs.map(d => setDoc(doc(collection(targetRoot, 'chat')), d.data()))
+    ...sourceHistorySnap.docs.map(d => setDoc(doc(collection(targetRoot, 'history')), d.data()))
   ]);
 
   detachAll();
@@ -714,8 +747,8 @@ async function initData(){
     state.history = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderApp();
   }));
-  unsubList.push(onSnapshot(query(chatCollection(), orderBy('createdAt', 'asc'), limit(100)), snap => {
-    state.messages = snap.docs.map(message => ({ id: message.id, ...message.data() }));
+  unsubList.push(onSnapshot(chatDocRef(), snap => {
+    state.messages = normalizeChatMessages(snap.exists() ? snap.data().messages : []);
     renderApp();
   }, showErrorToast));
 }
@@ -1403,7 +1436,13 @@ async function sendChatMessage(event){
   input.disabled = true;
   if(submitBtn) submitBtn.disabled = true;
   try{
-    await addDoc(chatCollection(), { text, author: myName, uid: myUid, createdAt: serverTimestamp() });
+    await runTransaction(db, async tx => {
+      const ref = chatDocRef();
+      const snap = await tx.get(ref);
+      const messages = normalizeChatMessages(snap.exists() ? snap.data().messages : []);
+      messages.push({ id: genId(), text, author: myName, uid: myUid, createdAt: Date.now() });
+      tx.set(ref, { messages: messages.slice(-CHAT_MAX_MESSAGES) });
+    });
   }catch(err){
     const currentInput = document.getElementById('chatInput');
     if(currentInput) currentInput.value = text;
@@ -1529,6 +1568,7 @@ async function deleteEntireTeam(){
       deleteDoc(docRef('defis')),
       deleteDoc(docRef('people')),
       deleteDoc(docRef('week')),
+      deleteDoc(chatDocRef()),
       ...historySnap.docs.map(d => deleteDoc(d.ref)),
       ...identitiesSnap.docs.map(d => deleteDoc(d.ref))
     ]);
