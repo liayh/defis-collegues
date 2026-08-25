@@ -16,8 +16,7 @@ import {
   getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
 import {
-  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction,
-  addDoc, query, orderBy, limit, serverTimestamp
+  getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, runTransaction
 } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 // La clé apiKey Firebase n'est pas un secret à cacher : elle identifie seulement le projet.
@@ -209,6 +208,8 @@ let state = { defis: [], people: [], week: null, historyCount: 0, messages: [] }
 let myName = null;
 let myUid = null;
 let currentPage = 'semaine';
+let chatSendInProgress = false;
+let skipChatDraftRestore = false;
 let unsubList = [];
 let defisReady = false, peopleReady = false, weekInitInProgress = false;
 
@@ -221,6 +222,7 @@ let defisReady = false, peopleReady = false, weekInitInProgress = false;
 const TEAM_CODE_KEY = 'defisColleguesTeamCode';
 const TEAM_CODE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O/1/I/l (ambigus)
 let teamCode = null;
+const CHAT_MAX_MESSAGES = 100;
 
 function getSavedTeamCode(){ return localStorage.getItem(TEAM_CODE_KEY); }
 function saveTeamCode(code){ localStorage.setItem(TEAM_CODE_KEY, code); }
@@ -356,7 +358,25 @@ function identityRef(uid){ return doc(collection(teamRoot(), 'identities'), uid)
 // Un document par semaine archivée plutôt qu'un unique tableau qui grossirait
 // indéfiniment (et finirait par dépasser la limite de 1 Mo par document Firestore).
 function historyCollection(){ return collection(teamRoot(), 'history'); }
-function chatCollection(){ return collection(teamRoot(), 'chat'); }
+// Stocke le tchat dans /state/chat, déjà couvert par les règles Firestore de
+// l'état de l'équipe. La sous-collection /chat déclenchait un refus de règles
+// masqué côté UI en "Erreur réseau".
+function chatDocRef(){ return docRef('chat'); }
+
+function normalizeChatMessages(messages){
+  if(!Array.isArray(messages)) return [];
+  return messages
+    .filter(message => message && typeof message.text === 'string' && message.text.trim())
+    .map((message, i) => ({
+      id: String(message.id || `${message.uid || 'message'}-${message.createdAt || i}`),
+      text: String(message.text).slice(0, 500),
+      author: String(message.author || 'Collègue').slice(0, 80),
+      uid: String(message.uid || ''),
+      createdAt: Number(message.createdAt) || 0
+    }))
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-CHAT_MAX_MESSAGES);
+}
 
 async function updateWeek(mutator){
   const ref = docRef('week');
@@ -426,7 +446,13 @@ function showToast(msg){
 
 function showErrorToast(err){
   console.error(err);
-  showToast('Erreur réseau, réessaie ⚠️');
+  if(err && err.code === 'permission-denied'){
+    showToast('Accès refusé par les règles Firestore ⚠️');
+  } else if(err && (err.code === 'unavailable' || err.code === 'deadline-exceeded')){
+    showToast(`Firebase indisponible (${err.code}) ⚠️`);
+  } else {
+    showToast(`Erreur${err && err.code ? ` (${err.code})` : ''}, réessaie ⚠️`);
+  }
 }
 
 function notificationStatusLabel(){
@@ -512,69 +538,82 @@ function showTeamScreen(){
       </div>
     </div>
   `;
-  document.getElementById('createTeamBtn').addEventListener('click', () => {
+  document.getElementById('createTeamBtn').addEventListener('click', async () => {
     const code = generateTeamCode();
     saveTeamCode(code);
     teamCode = code;
-    bootTeamData();
-    showToast(`Équipe créée — code à partager : ${code} 🔑`);
+    try{
+      await bootTeamData();
+      showToast(`Équipe créée — code à partager : ${code} 🔑`);
+    }catch(err){ showErrorToast(err); }
   });
-  const join = () => {
+  const join = async () => {
     const val = document.getElementById('joinTeamInput').value.trim().toUpperCase();
     if(!val) return;
     saveTeamCode(val);
     teamCode = val;
-    bootTeamData();
+    try{ await bootTeamData(); }
+    catch(err){ showErrorToast(err); }
   };
   document.getElementById('joinTeamBtn').addEventListener('click', join);
   document.getElementById('joinTeamInput').addEventListener('keydown', e => { if(e.key==='Enter') join(); });
 }
 
 async function initData(){
-  await new Promise(resolve => {
+  await new Promise((resolve, reject) => {
     let done = 0;
     const check = () => { done++; if(done === 2) resolve(); };
+    const fail = err => {
+      showErrorToast(err);
+      reject(err);
+    };
     unsubList.push(onSnapshot(docRef('defis'), async snap => {
-      if(snap.exists() && snap.data().list){ state.defis = snap.data().list; }
-      else { state.defis = DEFAULT_DEFIS; await setDoc(docRef('defis'), { list: state.defis }); }
-      if(!defisReady){ defisReady = true; check(); }
-      renderApp();
-    }));
+      try{
+        if(snap.exists() && snap.data().list){ state.defis = snap.data().list; }
+        else { state.defis = DEFAULT_DEFIS; await setDoc(docRef('defis'), { list: state.defis }); }
+        if(!defisReady){ defisReady = true; check(); }
+        renderApp();
+      }catch(err){ fail(err); }
+    }, fail));
     unsubList.push(onSnapshot(docRef('people'), async snap => {
-      // Pas de liste de personnes par défaut : une équipe nouvellement créée
-      // doit partir de zéro, pas hériter des collègues d'une autre équipe.
-      if(snap.exists() && snap.data().list){ state.people = snap.data().list; }
-      else { state.people = []; await setDoc(docRef('people'), { list: state.people }); }
-      if(!peopleReady){ peopleReady = true; check(); }
-      renderApp();
-    }));
+      try{
+        // Pas de liste de personnes par défaut : une équipe nouvellement créée
+        // doit partir de zéro, pas hériter des collègues d'une autre équipe.
+        if(snap.exists() && snap.data().list){ state.people = snap.data().list; }
+        else { state.people = []; await setDoc(docRef('people'), { list: state.people }); }
+        if(!peopleReady){ peopleReady = true; check(); }
+        renderApp();
+      }catch(err){ fail(err); }
+    }, fail));
   });
 
   unsubList.push(onSnapshot(docRef('week'), async snap => {
-    if(snap.exists() && snap.data().label === currentWeekLabel()){
-      state.week = snap.data();
-      ensureWeekShape(state.week, state.people);
-      renderApp();
-      notifyNewPending();
-    } else if(!weekInitInProgress){
-      weekInitInProgress = true;
-      try{
-        await runTransaction(db, async tx => {
-          const ref = docRef('week');
-          const fresh = await tx.get(ref);
-          if(!fresh.exists() || fresh.data().label !== currentWeekLabel()){
-            tx.set(ref, newWeek(assignRandomly()));
-          }
-        });
-      } finally { weekInitInProgress = false; }
-    }
-  }));
+    try{
+      if(snap.exists() && snap.data().label === currentWeekLabel()){
+        state.week = snap.data();
+        ensureWeekShape(state.week, state.people);
+        renderApp();
+        notifyNewPending();
+      } else if(!weekInitInProgress){
+        weekInitInProgress = true;
+        try{
+          await runTransaction(db, async tx => {
+            const ref = docRef('week');
+            const fresh = await tx.get(ref);
+            if(!fresh.exists() || fresh.data().label !== currentWeekLabel()){
+              tx.set(ref, newWeek(assignRandomly()));
+            }
+          });
+        } finally { weekInitInProgress = false; }
+      }
+    }catch(err){ showErrorToast(err); }
+  }, showErrorToast));
   unsubList.push(onSnapshot(historyCollection(), snap => {
     state.historyCount = snap.size;
     renderApp();
-  }));
-  unsubList.push(onSnapshot(query(chatCollection(), orderBy('createdAt', 'asc'), limit(100)), snap => {
-    state.messages = snap.docs.map(message => ({ id: message.id, ...message.data() }));
+  }, showErrorToast));
+  unsubList.push(onSnapshot(chatDocRef(), snap => {
+    state.messages = normalizeChatMessages(snap.exists() ? snap.data().messages : []);
     renderApp();
   }, showErrorToast));
 }
@@ -654,7 +693,7 @@ function renderApp(){
   const appEl = document.getElementById('app');
   if(active && appEl && appEl.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')){
     const selector = focusSelector(active);
-    if(selector){
+    if(selector && !(skipChatDraftRestore && selector === '#chatInput')){
       restore = { selector, value: active.value, selStart: active.selectionStart, selEnd: active.selectionEnd };
     }
   }
@@ -748,8 +787,8 @@ function render(){
         </div>
         <div class="chat-messages" id="chatMessages"></div>
         <form class="chat-form" id="chatForm">
-          <input id="chatInput" maxlength="500" autocomplete="off" placeholder="Écrire un message à l'équipe…" />
-          <button class="btn blue" type="submit">Envoyer</button>
+          <input id="chatInput" maxlength="500" autocomplete="off" placeholder="Écrire un message à l'équipe…" ${chatSendInProgress ? 'disabled' : ''} />
+          <button class="btn blue" type="submit" ${chatSendInProgress ? 'disabled' : ''}>Envoyer</button>
         </form>
       </div>
     </section>
@@ -1171,17 +1210,40 @@ function wireGlobalEvents(){
 async function sendChatMessage(event){
   event.preventDefault();
   if(!myName || !myUid) return showIdentityModal(false);
+  if(chatSendInProgress) return;
   const input = document.getElementById('chatInput');
+  if(!input) return;
   const text = input.value.trim();
   if(!text) return;
+  const submitBtn = document.querySelector('#chatForm button[type="submit"]');
+  chatSendInProgress = true;
+  skipChatDraftRestore = true;
+  input.value = '';
   input.disabled = true;
+  if(submitBtn) submitBtn.disabled = true;
   try{
-    await addDoc(chatCollection(), { text, author: myName, uid: myUid, createdAt: serverTimestamp() });
-    input.value = '';
-  }catch(err){ showErrorToast(err); }
+    await runTransaction(db, async tx => {
+      const ref = chatDocRef();
+      const snap = await tx.get(ref);
+      const messages = normalizeChatMessages(snap.exists() ? snap.data().messages : []);
+      messages.push({ id: genId(), text, author: myName, uid: myUid, createdAt: Date.now() });
+      tx.set(ref, { messages: messages.slice(-CHAT_MAX_MESSAGES) });
+    });
+  }catch(err){
+    const currentInput = document.getElementById('chatInput');
+    if(currentInput) currentInput.value = text;
+    showErrorToast(err);
+  }
   finally{
-    input.disabled = false;
-    input.focus();
+    chatSendInProgress = false;
+    skipChatDraftRestore = false;
+    const currentInput = document.getElementById('chatInput');
+    const currentSubmitBtn = document.querySelector('#chatForm button[type="submit"]');
+    if(currentInput){
+      currentInput.disabled = false;
+      currentInput.focus();
+    }
+    if(currentSubmitBtn) currentSubmitBtn.disabled = false;
   }
 }
 
@@ -1292,6 +1354,7 @@ async function deleteEntireTeam(){
       deleteDoc(docRef('defis')),
       deleteDoc(docRef('people')),
       deleteDoc(docRef('week')),
+      deleteDoc(chatDocRef()),
       ...historySnap.docs.map(d => deleteDoc(d.ref)),
       ...identitiesSnap.docs.map(d => deleteDoc(d.ref))
     ]);
