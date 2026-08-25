@@ -220,6 +220,8 @@ let myUid = null;
 let currentPage = 'semaine';
 let suggestionFilter = null;
 let suggestionSearch = '';
+let chatSendInProgress = false;
+let skipChatDraftRestore = false;
 let unsubList = [];
 let defisReady = false, peopleReady = false, weekInitInProgress = false;
 
@@ -793,7 +795,7 @@ function renderApp(){
   const appEl = document.getElementById('app');
   if(active && appEl && appEl.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')){
     const selector = focusSelector(active);
-    if(selector){
+    if(selector && !(skipChatDraftRestore && selector === '#chatInput')){
       restore = { selector, value: active.value, selStart: active.selectionStart, selEnd: active.selectionEnd };
     }
   }
@@ -898,8 +900,8 @@ function render(){
         </div>
         <div class="chat-messages" id="chatMessages"></div>
         <form class="chat-form" id="chatForm">
-          <input id="chatInput" maxlength="500" autocomplete="off" placeholder="Écrire un message à l'équipe…" />
-          <button class="btn blue" type="submit">Envoyer</button>
+          <input id="chatInput" maxlength="500" autocomplete="off" placeholder="Écrire un message à l'équipe…" ${chatSendInProgress ? 'disabled' : ''} />
+          <button class="btn blue" type="submit" ${chatSendInProgress ? 'disabled' : ''}>Envoyer</button>
         </form>
       </div>
     </section>
@@ -1389,17 +1391,34 @@ function wireGlobalEvents(){
 async function sendChatMessage(event){
   event.preventDefault();
   if(!myName || !myUid) return showIdentityModal(false);
+  if(chatSendInProgress) return;
   const input = document.getElementById('chatInput');
+  if(!input) return;
   const text = input.value.trim();
   if(!text) return;
+  const submitBtn = document.querySelector('#chatForm button[type="submit"]');
+  chatSendInProgress = true;
+  skipChatDraftRestore = true;
+  input.value = '';
   input.disabled = true;
+  if(submitBtn) submitBtn.disabled = true;
   try{
     await addDoc(chatCollection(), { text, author: myName, uid: myUid, createdAt: serverTimestamp() });
-    input.value = '';
-  }catch(err){ showErrorToast(err); }
+  }catch(err){
+    const currentInput = document.getElementById('chatInput');
+    if(currentInput) currentInput.value = text;
+    showErrorToast(err);
+  }
   finally{
-    input.disabled = false;
-    input.focus();
+    chatSendInProgress = false;
+    skipChatDraftRestore = false;
+    const currentInput = document.getElementById('chatInput');
+    const currentSubmitBtn = document.querySelector('#chatForm button[type="submit"]');
+    if(currentInput){
+      currentInput.disabled = false;
+      currentInput.focus();
+    }
+    if(currentSubmitBtn) currentSubmitBtn.disabled = false;
   }
 }
 
