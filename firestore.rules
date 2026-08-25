@@ -1,0 +1,51 @@
+rules_version = '2';
+
+// Règles de sécurité Firestore pour "Listing Défis — Équipe".
+//
+// Modèle de sécurité : l'accès à une équipe repose sur la connaissance de
+// son code (7 caractères, ~4 milliards de combinaisons), pas sur une
+// identité vérifiée — n'importe quel compte Google authentifié qui connaît
+// le code d'une équipe peut y lire/écrire. C'est le même principe que
+// l'app "Mission Famille". Voir les commentaires dans app.js (TEAM_CODE_KEY,
+// teamRoot()) pour le détail.
+//
+// À coller dans Firebase Console → Firestore Database → Règles → Publier.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /defisCollegues_teams/{teamCode} {
+
+      // Défis, personnes, semaine en cours — toutes les mutations passent
+      // par des transactions côté client (voir updateWeek/updateDefis/
+      // addPersonCore/removePerson dans app.js).
+      match /state/{doc} {
+        allow read, write: if request.auth != null;
+      }
+
+      // Lien compte Google (uid) → prénom affiché dans l'équipe. Chacun ne
+      // peut créer/modifier que sa propre identité (uid == doc id), mais
+      // tout membre authentifié peut lire la liste (affichage des noms) et
+      // supprimer une identité — nécessaire pour "Supprimer l'équipe entière"
+      // qui doit pouvoir effacer les identités de TOUS les membres, pas
+      // seulement la sienne.
+      match /identities/{uid} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null && request.auth.uid == uid;
+        allow delete: if request.auth != null;
+      }
+
+      // Semaines archivées (une par semaine passée, jamais modifiées après
+      // création).
+      match /history/{doc} {
+        allow read, create, delete: if request.auth != null;
+      }
+
+      // Messages de la discussion d'équipe — pas de modification/suppression
+      // après envoi.
+      match /chat/{doc} {
+        allow read, create: if request.auth != null;
+      }
+    }
+  }
+}

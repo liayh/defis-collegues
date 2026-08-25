@@ -558,9 +558,19 @@ function showToast(msg){
   showToast._t = setTimeout(()=> t.classList.remove('show'), 1800);
 }
 
+// Affiche la vraie cause plutôt qu'un "Erreur réseau" générique qui masque
+// les problèmes de règles de sécurité Firestore (le cas le plus fréquent :
+// une sous-collection comme "chat" pas couverte par les règles, ce qui
+// ressemble à un souci réseau alors que la connexion fonctionne très bien).
 function showErrorToast(err){
   console.error(err);
-  showToast('Erreur réseau, réessaie ⚠️');
+  if(err && err.code === 'permission-denied'){
+    showToast('Accès refusé par les règles Firestore ⚠️');
+  } else if(err && (err.code === 'unavailable' || err.code === 'deadline-exceeded')){
+    showToast('Erreur réseau, réessaie ⚠️');
+  } else {
+    showToast(`Erreur${err && err.code ? ` (${err.code})` : ''}, réessaie ⚠️`);
+  }
 }
 
 function notificationStatusLabel(){
